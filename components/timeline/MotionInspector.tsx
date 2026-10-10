@@ -64,6 +64,9 @@ export function MotionInspector() {
   const [name, setName] = React.useState('');
   const clip = state.animationClips.find(c => c.id === selection.clipId);
   const tracks = state.timeline.tracks.filter(t => t.clipId === clip?.id);
+  const layerTarget = !!clip?.target && clip.target !== 'asset';
+  const controlsGroup = layerTarget ? 'asset' : group;
+  const sceneCamera = tracks.some(t => t.type === 'camera');
   const selectedTrack = tracks.find(t => t.id === selection.keyframe?.trackId);
   const selectedKey = selectedTrack?.keyframes.find(k => k.id === selection.keyframe?.keyframeId);
   const time = selectedKey?.time ?? Math.max(clip?.startTime ?? 0, Math.min((clip?.startTime ?? 0) + (clip?.duration ?? 0), state.timeline.playhead));
@@ -82,7 +85,7 @@ export function MotionInspector() {
     </div>
     {!clip ? <p className="text-xs leading-relaxed text-muted-foreground">Create a motion or select a timeline clip to edit its keyframes. Presets are fully editable.</p> : <>
       <div className="flex items-center gap-2"><input aria-label="Animation name" className={`${input} flex-1 font-medium`} value={clip.name} onChange={e => state.updateAnimationClip(clip.id, { name: e.target.value })} /><button className={button} aria-label="Delete selected animation or keyframe" onClick={deleteSelectedMotion}><Trash2 size={14} /></button></div>
-      <label className="block space-y-1 text-xs text-muted-foreground">Animation target<select aria-label="Animation target" className={`${input} w-full`} value={clip.target ?? 'asset'} onChange={e => state.updateAnimationClip(clip.id, { target: e.target.value })}><option value="asset">Main asset / mockup</option>{state.imageOverlays.filter(o => o.isCustom).map((o, index) => <option key={o.id} value={o.id}>{o.mediaType === 'video' ? 'Video' : 'Image'} layer {index + 1}</option>)}</select></label>
+      <label className="block space-y-1 text-xs text-muted-foreground">Animation target<select aria-label="Animation target" disabled={sceneCamera} title={sceneCamera ? 'Camera motion targets the entire scene' : undefined} className={`${input} w-full`} value={clip.target ?? 'asset'} onChange={e => state.updateAnimationClip(clip.id, { target: e.target.value })}><option value="asset">Main asset / mockup</option>{state.imageOverlays.filter(o => o.isCustom).map((o, index) => <option key={o.id} value={o.id}>{o.mediaType === 'video' ? 'Video' : 'Image'} layer {index + 1}</option>)}</select></label>
       <div className="flex items-center justify-between gap-1">
         <button className={button} onClick={() => { state.stopPlayback(); selection.selectKeyframe(null); state.setPlayhead(clip.startTime); }}><ChevronLeft size={12} />Before</button>
         <span className="text-xs tabular-nums">{((time - clip.startTime) / 1000).toFixed(2)}s</span>
@@ -92,9 +95,9 @@ export function MotionInspector() {
         <label className="space-y-1 text-xs text-muted-foreground">Start (s)<input aria-label="Clip start seconds" type="number" min="0" step="0.1" className={`${input} w-full`} value={Number((clip.startTime / 1000).toFixed(2))} onChange={e => { if (e.target.value) state.updateAnimationClip(clip.id, { startTime: +e.target.value * 1000 }); }} /></label>
         <label className="space-y-1 text-xs text-muted-foreground">Duration (s)<input aria-label="Clip duration seconds" type="number" min="0.2" step="0.1" className={`${input} w-full`} value={Number((clip.duration / 1000).toFixed(2))} onChange={e => { if (e.target.value) state.updateAnimationClip(clip.id, { duration: +e.target.value * 1000 }); }} /></label>
       </div>
-      <div className="flex gap-1 rounded-md bg-muted p-1" role="group" aria-label="Animated target">{(['asset', 'camera'] as const).map(target => <button key={target} aria-pressed={group === target} className={`h-7 flex-1 rounded text-xs ${group === target ? 'bg-background text-foreground' : 'text-muted-foreground'}`} onClick={() => setGroup(target)}>{target === 'asset' ? 'Asset' : 'Camera'}</button>)}</div>
+      <div className="flex gap-1 rounded-md bg-muted p-1" role="group" aria-label="Animated target">{(['asset', 'camera'] as const).map(target => <button key={target} disabled={target === 'camera' && layerTarget} title={target === 'camera' && layerTarget ? 'Use Camera above to animate the scene' : undefined} aria-pressed={controlsGroup === target} className={`h-7 flex-1 rounded text-xs ${controlsGroup === target ? 'bg-background text-foreground' : 'text-muted-foreground'}`} onClick={() => setGroup(target)}>{target === 'asset' ? 'Asset' : 'Camera'}</button>)}</div>
       <div className="space-y-2">
-        {PROPERTY_CONTROLS.filter(p => p.group === group).map(p => {
+        {PROPERTY_CONTROLS.filter(p => p.group === controlsGroup).map(p => {
           const track = tracks.find(t => t.keyframes.some(k => p.key in k.properties));
           const atKey = track?.keyframes.some(k => Math.abs(k.time - time) < 1 && p.key in k.properties);
           return <div key={p.key} className="grid grid-cols-[1fr_78px_30px] items-center gap-2">

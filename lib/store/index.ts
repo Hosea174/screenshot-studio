@@ -1992,6 +1992,8 @@ export const useImageStore = create<ImageState>()(
       if (!preset) return;
 
       trackAnimationClipAdd(presetId, preset.name, preset.duration);
+      // Scene camera presets remain global even when a media layer is selected.
+      if (preset.tracks.some(track => track.type === 'camera')) target = 'asset';
 
       const id = `clip-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       // Brand-matching green color palette

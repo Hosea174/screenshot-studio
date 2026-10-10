@@ -124,7 +124,8 @@ test('a clip drag is a single undoable transaction and saved preset instances st
   useImageStore.temporal.getState().undo();assert.equal(useImageStore.getState().animationClips[0].startTime,0);
   const tracks=useImageStore.getState().timeline.tracks;
   useMotionLibrary.getState().save({id:'saved-test',name:'My move',description:'test',category:'effects',duration:2000,tracks});
-  state.addAnimationClip('saved-test',2000);assert.equal(useImageStore.getState().animationClips.at(-1)?.name,'My move');
+  state.addAnimationClip('saved-test',2000,'video-layer');assert.equal(useImageStore.getState().animationClips.at(-1)?.name,'My move');
+  assert.equal(useImageStore.getState().animationClips.at(-1)?.target,'asset');
   assert.equal(useImageStore.getState().timeline.tracks.at(-1)?.keyframes[0].time,2000);
   useMotionLibrary.getState().remove('saved-test');
 });

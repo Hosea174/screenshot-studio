@@ -12,6 +12,8 @@
 
 Position X/Y keyframes use percentages; camera X/Y use pixels; tilt, rotation, pitch, yaw, and roll use degrees. Scale and camera zoom are multipliers; opacity runs from 0 to 1. Perspective uses pixels. Camera motion transforms the composition's CSS scene, separately from local asset transforms.
 
+Camera clips and saved camera presets always target the whole scene. Use **Custom** for individual media-layer motion and **Camera** for scene movement; layer clips expose their asset properties.
+
 ## Keyboard controls
 
 Shortcuts operate while the timeline is open and yield to text entry and other editable controls.
