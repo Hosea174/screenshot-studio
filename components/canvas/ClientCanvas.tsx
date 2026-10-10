@@ -7,6 +7,7 @@ import { useResponsiveCanvasDimensions } from "@/hooks/useAspectRatioDimensions"
 import { generateNoiseTexture } from "@/lib/export/export-utils";
 import { MockupSceneRenderer } from "@/components/mockups/MockupRenderer";
 import { useDeviceUIStore } from "@/lib/store/device-ui";
+import { useMotionSelection } from '@/lib/animation/editor';
 import { shouldIgnoreEditorShortcut } from "@/lib/editor-shortcuts";
 import { calculateCanvasDimensions } from "./utils/canvas-dimensions";
 import { CanvasStageShell } from "./CanvasStageShell";
@@ -248,6 +249,7 @@ function CanvasRenderer({ image }: { image: HTMLImageElement }) {
 
   useEffect(() => {
     if (!selectedDeviceId) return;
+    useMotionSelection.getState().selectClip(null);
     setSelectedOverlayId(null);
     setIsMainImageSelected(false);
     setSelectedTextId(null);
@@ -268,6 +270,7 @@ function CanvasRenderer({ image }: { image: HTMLImageElement }) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (shouldIgnoreEditorShortcut(e)) return;
+      if (useMotionSelection.getState().clipId && useImageStore.getState().showTimeline) return;
 
       // Delete selected overlay or main image (only when not typing)
       if (e.key === "Delete" || e.key === "Backspace") {
@@ -688,8 +691,9 @@ export default function ClientCanvas({
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [loadError, setLoadError] = useState(false);
   const { screenshot, setScreenshot } = useEditorStore();
-  const { uploadedImageUrl, editorMode, mockups, textOverlays } = useImageStore();
+  const { uploadedImageUrl, editorMode, mockups, textOverlays, imageOverlays } = useImageStore();
   const hasText = textOverlays.length > 0;
+  const hasMedia = imageOverlays.length > 0;
   const hasDeviceScene = editorMode === "device" && hasVisibleMockups(mockups);
   const hasSourceImage = !!screenshot.src
     && !!uploadedImageUrl
@@ -699,7 +703,7 @@ export default function ClientCanvas({
   useEffect(() => {
     setLoadError(false);
 
-    if (!hasSourceImage && !hasDeviceScene && !hasText) {
+    if (!hasSourceImage && !hasDeviceScene && !hasText && !hasMedia) {
       setImage(null);
       return;
     }
@@ -734,7 +738,7 @@ export default function ClientCanvas({
     return () => {
       clearTimeout(timeoutId);
     };
-  }, [hasDeviceScene, hasSourceImage, hasText, screenshot.src, setScreenshot]);
+  }, [hasDeviceScene, hasSourceImage, hasText, hasMedia, screenshot.src, setScreenshot]);
 
   useEffect(() => {
     if (image) {
@@ -742,7 +746,7 @@ export default function ClientCanvas({
     }
   }, [image, onReady]);
 
-  if (loadError || (!hasSourceImage && !hasDeviceScene && !hasText)) {
+  if (loadError || (!hasSourceImage && !hasDeviceScene && !hasText && !hasMedia)) {
     return null;
   }
 

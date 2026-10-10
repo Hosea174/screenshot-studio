@@ -20,6 +20,9 @@ import {
   restoreMockupsFromLayoutSnapshot,
 } from "@/lib/device-mockups/layouts";
 import type { TimelineState, AnimationTrack, Keyframe, AnimatableProperties, AnimationClip } from "@/types/animation";
+import { getClipInterpolatedProperties } from '@/lib/animation/interpolation';
+import { retimeClipTracks, clampClipDuration } from '@/lib/animation/retiming';
+import { useMotionLibrary, useMotionSelection, createCustomPreset, splitPropertyTracks } from '@/lib/animation/editor';
 import { DEFAULT_ANIMATABLE_PROPERTIES, DEFAULT_TIMELINE_STATE } from "@/types/animation";
 import { clonePresetTracks, getPresetById, ANIMATION_PRESETS } from "@/lib/animation/presets";
 import {
@@ -91,6 +94,15 @@ export interface ImageOverlayTilt {
 }
 
 export interface ImageOverlay {
+  mediaType?: 'image' | 'video';
+  poster?: string;
+  mediaDuration?: number;
+  mediaWidth?: number;
+  mediaHeight?: number;
+  startTime?: number;
+  trimStart?: number;
+  playbackRate?: number;
+  loop?: boolean;
   id: string;
   src: string;
   position: { x: number; y: number }; // Position in pixels relative to canvas
@@ -690,6 +702,9 @@ export interface ImageState {
   stopPreview: () => void;
 
   // Timeline / Animation
+  animationBase: AnimatableProperties;
+  camera: Pick<AnimatableProperties, 'cameraX' | 'cameraY' | 'cameraZoom' | 'cameraRotateX' | 'cameraRotateY' | 'cameraRotateZ'>;
+  setCamera: (camera: Partial<ImageState['camera']>) => void;
   timeline: TimelineState;
   showTimeline: boolean;
   animationClips: AnimationClip[];
@@ -710,7 +725,7 @@ export interface ImageState {
   clearTimeline: () => void;
   setTimelineDuration: (duration: number) => void;
   // Animation clips
-  addAnimationClip: (presetId: string, startTime: number) => void;
+  addAnimationClip: (presetId: string, startTime: number, target?: string) => void;
   updateAnimationClip: (clipId: string, updates: Partial<AnimationClip>) => void;
   removeAnimationClip: (clipId: string) => void;
   clearAnimationClips: () => void;
@@ -965,6 +980,8 @@ export const useImageStore = create<ImageState>()(
         timeline: { ...DEFAULT_TIMELINE_STATE },
         animationClips: [],
         showTimeline: false,
+        animationBase: { ...DEFAULT_ANIMATABLE_PROPERTIES },
+        camera: { cameraX: 0, cameraY: 0, cameraZoom: 1, cameraRotateX: 0, cameraRotateY: 0, cameraRotateZ: 0 },
       });
     },
 
@@ -1050,6 +1067,8 @@ export const useImageStore = create<ImageState>()(
         timeline: { ...DEFAULT_TIMELINE_STATE },
         animationClips: [],
         showTimeline: false,
+        animationBase: { ...DEFAULT_ANIMATABLE_PROPERTIES },
+        camera: { cameraX: 0, cameraY: 0, cameraZoom: 1, cameraRotateX: 0, cameraRotateY: 0, cameraRotateZ: 0 },
       });
     },
 
@@ -1495,6 +1514,8 @@ export const useImageStore = create<ImageState>()(
                 animationClips: [],
                 timeline: { ...DEFAULT_TIMELINE_STATE },
                 showTimeline: false,
+                animationBase: { ...DEFAULT_ANIMATABLE_PROPERTIES },
+                camera: { cameraX: 0, cameraY: 0, cameraZoom: 1, cameraRotateX: 0, cameraRotateY: 0, cameraRotateZ: 0 },
               }
             : {}),
           ...(options.closeTemplates ? { showTemplates: false } : {}),
@@ -1580,10 +1601,12 @@ export const useImageStore = create<ImageState>()(
           activeDeviceLayoutId: null,
           deviceLayoutSnapshot: null,
           animationClips: [animation.clip],
+          animationBase: { ...DEFAULT_ANIMATABLE_PROPERTIES },
+          camera: { cameraX: 0, cameraY: 0, cameraZoom: 1, cameraRotateX: 0, cameraRotateY: 0, cameraRotateZ: 0 },
           timeline: {
             ...DEFAULT_TIMELINE_STATE,
             duration: animation.duration,
-            tracks: animation.tracks,
+            tracks: splitPropertyTracks(animation.tracks),
             isPlaying: true,
           },
           showTimeline: true,
@@ -1700,6 +1723,8 @@ export const useImageStore = create<ImageState>()(
         timeline: { ...DEFAULT_TIMELINE_STATE },
         animationClips: [],
         showTimeline: false,
+        animationBase: { ...DEFAULT_ANIMATABLE_PROPERTIES },
+        camera: { cameraX: 0, cameraY: 0, cameraZoom: 1, cameraRotateX: 0, cameraRotateY: 0, cameraRotateZ: 0 },
       });
     },
 
@@ -1799,6 +1824,9 @@ export const useImageStore = create<ImageState>()(
       });
     },
 
+    animationBase: { ...DEFAULT_ANIMATABLE_PROPERTIES },
+    camera: { cameraX: 0, cameraY: 0, cameraZoom: 1, cameraRotateX: 0, cameraRotateY: 0, cameraRotateZ: 0 },
+    setCamera: (camera) => set(state => ({ camera: { ...state.camera, ...camera } })),
     // Timeline / Animation state
     timeline: { ...DEFAULT_TIMELINE_STATE },
     showTimeline: false,
@@ -1826,7 +1854,7 @@ export const useImageStore = create<ImageState>()(
 
     togglePlayback: () => {
       set((state) => ({
-        timeline: { ...state.timeline, isPlaying: !state.timeline.isPlaying },
+        timeline: { ...state.timeline, playhead: !state.timeline.isPlaying && state.timeline.playhead >= state.timeline.duration ? 0 : state.timeline.playhead, isPlaying: !state.timeline.isPlaying },
       }));
     },
 
@@ -1849,7 +1877,7 @@ export const useImageStore = create<ImageState>()(
           ...state.timeline,
           tracks: state.timeline.tracks.map((track) =>
             track.id === trackId
-              ? { ...track, keyframes: [...track.keyframes, { ...keyframe, id }] }
+              ? track.isLocked ? track : { ...track, keyframes: [...track.keyframes.filter(k => k.time !== keyframe.time), { ...keyframe, id }].sort((a,b) => a.time-b.time) }
               : track
           ),
         },
@@ -1861,11 +1889,11 @@ export const useImageStore = create<ImageState>()(
         timeline: {
           ...state.timeline,
           tracks: state.timeline.tracks.map((track) =>
-            track.id === trackId
+            track.id === trackId && !track.isLocked
               ? {
                   ...track,
                   keyframes: track.keyframes.map((kf) =>
-                    kf.id === keyframeId ? { ...kf, ...updates } : kf
+                    kf.id === keyframeId ? { ...kf, ...updates, properties: { ...kf.properties, ...updates.properties } } : kf
                   ),
                 }
               : track
@@ -1879,7 +1907,7 @@ export const useImageStore = create<ImageState>()(
         timeline: {
           ...state.timeline,
           tracks: state.timeline.tracks.map((track) =>
-            track.id === trackId
+            track.id === trackId && !track.isLocked
               ? { ...track, keyframes: track.keyframes.filter((kf) => kf.id !== keyframeId) }
               : track
           ),
@@ -1935,6 +1963,7 @@ export const useImageStore = create<ImageState>()(
 
     clearTimeline: () => {
       set({
+        animationClips: [],
         timeline: { ...DEFAULT_TIMELINE_STATE },
       });
     },
@@ -1942,24 +1971,15 @@ export const useImageStore = create<ImageState>()(
     setTimelineDuration: (duration) => {
       set((state) => {
         const newDuration = Math.max(500, duration);
-        // Clamp animation clips to fit within the new duration
-        const clampedClips = state.animationClips.map((clip) => {
-          // Ensure clip doesn't extend beyond new duration
-          const maxStartTime = Math.max(0, newDuration - 200); // Minimum clip duration of 200ms
-          const clampedStart = Math.min(clip.startTime, maxStartTime);
-          const maxDuration = newDuration - clampedStart;
-          const clampedDuration = Math.min(clip.duration, maxDuration);
-          return {
-            ...clip,
-            startTime: clampedStart,
-            duration: Math.max(200, clampedDuration),
-          };
-        });
+        const clampedClips = state.animationClips.map(clip => clampClipDuration(clip, newDuration));
+        let retimed = state.timeline.tracks;
+        state.animationClips.forEach((clip, index) => { retimed = retimeClipTracks(retimed, clip, clampedClips[index]); });
         return {
           animationClips: clampedClips,
           timeline: {
             ...state.timeline,
             duration: newDuration,
+            tracks: retimed,
             playhead: Math.min(state.timeline.playhead, newDuration),
           },
         };
@@ -1967,8 +1987,8 @@ export const useImageStore = create<ImageState>()(
     },
 
     // Animation clips
-    addAnimationClip: (presetId, startTime) => {
-      const preset = ANIMATION_PRESETS.find(p => p.id === presetId);
+    addAnimationClip: (presetId, startTime, target = 'asset') => {
+      const preset = presetId === 'custom-asset' || presetId === 'custom-camera' ? createCustomPreset(presetId === 'custom-camera' ? 'camera' : 'asset', get().animationClips.length > 0 ? getClipInterpolatedProperties(get().animationClips, get().timeline.tracks, startTime, target === 'asset' ? get().animationBase : DEFAULT_ANIMATABLE_PROPERTIES, target) : target === 'asset' ? { ...DEFAULT_ANIMATABLE_PROPERTIES, ...get().perspective3D, ...get().camera, imageOpacity: get().imageOpacity } : DEFAULT_ANIMATABLE_PROPERTIES) : ANIMATION_PRESETS.find(p => p.id === presetId) ?? useMotionLibrary.getState().presets.find(p => p.id === presetId);
       if (!preset) return;
 
       trackAnimationClipAdd(presetId, preset.name, preset.duration);
@@ -1981,19 +2001,24 @@ export const useImageStore = create<ImageState>()(
       const newClip: AnimationClip = {
         id,
         presetId,
+        target,
+        transition: preset.transition ? { ...preset.transition } : undefined,
         name: preset.name,
         startTime,
         duration: preset.duration,
         color,
       };
 
+      useMotionSelection.getState().selectClip(id);
       // Clone preset tracks with startTime offset and link to clip
-      const tracks = clonePresetTracks(preset, { startTime, clipId: id });
+      const tracks = splitPropertyTracks(clonePresetTracks(preset, { startTime, clipId: id }));
 
       set((state) => ({
+        animationBase: state.animationClips.length === 0 ? { ...DEFAULT_ANIMATABLE_PROPERTIES, ...state.perspective3D, ...state.camera, imageOpacity: state.imageOpacity } : state.animationBase,
         animationClips: [...state.animationClips, newClip],
         timeline: {
           ...state.timeline,
+          duration: Math.max(state.timeline.duration, startTime + preset.duration),
           tracks: [...state.timeline.tracks, ...tracks],
         },
         showTimeline: true,
@@ -2005,44 +2030,12 @@ export const useImageStore = create<ImageState>()(
         const existingClip = state.animationClips.find(c => c.id === clipId);
         if (!existingClip) return state;
 
-        const newClip = { ...existingClip, ...updates };
+        const newClip = { ...existingClip, ...updates,
+          startTime: Math.max(0, updates.startTime ?? existingClip.startTime),
+          duration: Math.max(200, updates.duration ?? existingClip.duration),
+        };
 
-        // If startTime or duration changed, update the corresponding track keyframes
-        const startTimeChanged = updates.startTime !== undefined && updates.startTime !== existingClip.startTime;
-        const durationChanged = updates.duration !== undefined && updates.duration !== existingClip.duration;
-
-        let updatedTracks = state.timeline.tracks;
-
-        if (startTimeChanged || durationChanged) {
-          updatedTracks = state.timeline.tracks.map((track) => {
-            if (track.clipId !== clipId) return track;
-
-            const originalDuration = track.originalDuration || existingClip.duration;
-            const newStartTime = updates.startTime ?? existingClip.startTime;
-            const newDuration = updates.duration ?? existingClip.duration;
-            const oldStartTime = existingClip.startTime;
-
-            // Calculate time scaling factor if duration changed
-            const scaleFactor = durationChanged ? newDuration / existingClip.duration : 1;
-
-            return {
-              ...track,
-              keyframes: track.keyframes.map((kf) => {
-                // First, get the relative time within the clip (remove old startTime offset)
-                const relativeTime = kf.time - oldStartTime;
-                // Scale the relative time if duration changed
-                const scaledRelativeTime = relativeTime * scaleFactor;
-                // Add the new start time offset
-                const newTime = scaledRelativeTime + newStartTime;
-
-                return {
-                  ...kf,
-                  time: Math.max(0, newTime),
-                };
-              }),
-            };
-          });
-        }
+        const updatedTracks = retimeClipTracks(state.timeline.tracks, existingClip, newClip);
 
         return {
           animationClips: state.animationClips.map((clip) =>
@@ -2050,6 +2043,7 @@ export const useImageStore = create<ImageState>()(
           ),
           timeline: {
             ...state.timeline,
+            duration: Math.max(state.timeline.duration, newClip.startTime + newClip.duration),
             tracks: updatedTracks,
           },
         };
@@ -2211,14 +2205,16 @@ export const useImageStore = create<ImageState>()(
       })),
   }), {
     // Layout measurements change on mount/resize and must not erase redo history.
-    partialize: ({ selectedOverlayId: _overlay, isMainImageSelected: _main, canvasDimensions: _dimensions, ...state }) => state,
-    equality: shallow,
+    partialize: ({ selectedOverlayId: _overlay, isMainImageSelected: _main, canvasDimensions: _dimensions, ...state }) => ({ ...state, timeline: { ...state.timeline, playhead: 0, isPlaying: false } }),
+    equality: (past, current) => shallow({ ...past, timeline: null }, { ...current, timeline: null }) && shallow(past.timeline, current.timeline),
   })
 );
 
 // Selection is transient: deleting, resetting, restoring, or undoing layers must
 // never leave controls or keyboard shortcuts targeting a removed image.
 useImageStore.subscribe((state) => {
+  const selectedClip = useMotionSelection.getState().clipId;
+  if (selectedClip && !state.animationClips.some(c => c.id === selectedClip)) useMotionSelection.getState().selectClip(null);
   if (state.selectedOverlayId && !state.imageOverlays.some((overlay) => overlay.id === state.selectedOverlayId)) {
     state.setSelectedOverlayId(null);
   }

@@ -1,5 +1,6 @@
 'use client';
 
+import { Slider } from '@/components/ui/slider';
 import * as React from 'react';
 import { useImageStore } from '@/lib/store';
 import { useDropzone } from 'react-dropzone';
@@ -118,6 +119,8 @@ export function BackgroundSection() {
     setBackgroundValue,
     addImageOverlay,
     removeImageOverlay,
+    updateImageOverlay,
+    setBackgroundConfig,
   } = useImageStore();
 
   const responsiveDimensions = useResponsiveCanvasDimensions();
@@ -296,8 +299,16 @@ export function BackgroundSection() {
             ))}
           </div>
         </div>
+        {currentShadow && <Slider label="Overlay opacity" min={0} max={1} step={0.01} value={[currentShadow.opacity]} valueDisplay={`${Math.round(currentShadow.opacity * 100)}%`} onValueChange={([opacity]) => updateImageOverlay(currentShadow.id, { opacity })} />}
       </SectionWrapper>
-
+      {backgroundConfig.type === 'image' && <SectionWrapper title="Background color" defaultOpen>
+        <div className="space-y-3">
+          <Slider label="Hue" min={-180} max={180} step={1} value={[backgroundConfig.hsl?.hue ?? 0]} valueDisplay={`${backgroundConfig.hsl?.hue ?? 0}°`} onValueChange={([hue]) => setBackgroundConfig({ ...backgroundConfig, hsl: { hue, saturation: backgroundConfig.hsl?.saturation ?? 100, lightness: backgroundConfig.hsl?.lightness ?? 100 } })} />
+          <Slider label="Saturation" min={0} max={300} step={1} value={[backgroundConfig.hsl?.saturation ?? 100]} valueDisplay={`${backgroundConfig.hsl?.saturation ?? 100}%`} onValueChange={([saturation]) => setBackgroundConfig({ ...backgroundConfig, hsl: { hue: backgroundConfig.hsl?.hue ?? 0, saturation, lightness: backgroundConfig.hsl?.lightness ?? 100 } })} />
+          <Slider label="Lightness" min={0} max={200} step={1} value={[backgroundConfig.hsl?.lightness ?? 100]} valueDisplay={`${backgroundConfig.hsl?.lightness ?? 100}%`} onValueChange={([lightness]) => setBackgroundConfig({ ...backgroundConfig, hsl: { hue: backgroundConfig.hsl?.hue ?? 0, saturation: backgroundConfig.hsl?.saturation ?? 100, lightness } })} />
+          <button type="button" className="h-7 rounded px-2 text-xs text-muted-foreground hover:bg-accent" onClick={() => setBackgroundConfig({ ...backgroundConfig, hsl: undefined })}>Reset color</button>
+        </div>
+      </SectionWrapper>}
       <SectionWrapper title="Custom Background" defaultOpen={true}>
         <div className="grid grid-cols-3 gap-2 p-1">
           <div

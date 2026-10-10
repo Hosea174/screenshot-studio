@@ -1,1 +1,1 @@
-export const TIMELINE_HEIGHT = 210;
+export const TIMELINE_HEIGHT = 330;

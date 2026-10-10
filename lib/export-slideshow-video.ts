@@ -86,6 +86,9 @@ function saveStoreState() {
   const store = useImageStore.getState();
   return {
     perspective3D: { ...store.perspective3D },
+    camera: { ...store.camera },
+    playhead: store.timeline.playhead,
+    isPlaying: store.timeline.isPlaying,
     imageOpacity: store.imageOpacity,
     activeSlideId: store.activeSlideId,
   };
@@ -97,10 +100,13 @@ function saveStoreState() {
 function restoreStoreState(saved: ReturnType<typeof saveStoreState>) {
   const store = useImageStore.getState();
   store.setPerspective3D(saved.perspective3D);
+  store.setCamera(saved.camera);
+  store.setPlayhead(saved.playhead);
   store.setImageOpacity(saved.imageOpacity);
   if (saved.activeSlideId) {
     store.setActiveSlide(saved.activeSlideId);
   }
+  if (saved.isPlaying) store.startPlayback();
 }
 
 /**
@@ -163,6 +169,7 @@ export async function exportSlideshowVideo(options: VideoExportOptions = {}) {
   const { format = "mp4", quality = "high" } = options;
   const progress = useExportProgress.getState();
   const savedState = saveStoreState();
+  useImageStore.getState().stopPlayback();
 
   const signal = progress.start();
 
@@ -409,6 +416,7 @@ export async function exportAnimationVideo(options: VideoExportOptions = {}) {
   const { format = "mp4", quality = "high", encoder = "auto" } = options;
   const progress = useExportProgress.getState();
   const savedState = saveStoreState();
+  useImageStore.getState().stopPlayback();
 
   const signal = progress.start();
 

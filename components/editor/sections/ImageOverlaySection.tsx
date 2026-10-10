@@ -1,5 +1,7 @@
 'use client';
 
+import { addVideoLayer } from '@/lib/video-layers';
+import { toast } from 'sonner';
 import * as React from 'react';
 import { useImageStore } from '@/lib/store';
 import { SectionWrapper } from './SectionWrapper';
@@ -7,7 +9,8 @@ import { getR2ImageUrl } from '@/lib/r2';
 import { isOverlayPath } from '@/lib/r2-overlays';
 import { ArrowRight01Icon, LayersLogoIcon, Image01Icon } from 'hugeicons-react';
 
-function getThumbSrc(overlay: { src: string; isCustom?: boolean }) {
+function getThumbSrc(overlay: { src: string; isCustom?: boolean; mediaType?: string; poster?: string }) {
+  if (overlay.mediaType === 'video') return overlay.poster;
   const isR2 =
     isOverlayPath(overlay.src) ||
     (typeof overlay.src === 'string' && overlay.src.startsWith('overlays/'));
@@ -24,7 +27,13 @@ export function ImageOverlaySection() {
   const handleAddImage = React.useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files?.length) return;
-    Array.from(files).forEach((file) => {
+    Array.from(files).forEach(async (file) => {
+      if (file.type.startsWith('video/')) {
+        try {
+          await addVideoLayer(file);
+        } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not add video'); }
+        return;
+      }
       const url = URL.createObjectURL(file);
       addImageOverlay({
         src: url,
@@ -48,12 +57,12 @@ export function ImageOverlaySection() {
   const previewOverlays = imageOverlays.slice(-4);
 
   return (
-    <SectionWrapper title="Stickers" defaultOpen={true}>
+    <SectionWrapper title="Media layers" defaultOpen={true}>
       <div className="space-y-2">
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept="image/*,video/mp4,video/webm,video/quicktime"
           multiple
           className="hidden"
           onChange={handleAddImage}
@@ -66,7 +75,7 @@ export function ImageOverlaySection() {
             <Image01Icon size={16} />
           </div>
           <span className="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors">
-            Add Image to Canvas
+            Add image or video
           </span>
         </button>
 

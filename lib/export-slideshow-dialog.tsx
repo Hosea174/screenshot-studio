@@ -119,13 +119,13 @@ export function ExportSlideshowDialog({
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
-  const { slideshow, setSlideshow, timeline, slides, animationClips } = useImageStore();
+  const { slideshow, setSlideshow, timeline, slides, animationClips, imageOverlays } = useImageStore();
   const { active: exporting, progress, abort } = useExportProgress();
   const [format, setFormat] = useState<VideoFormat>("mp4");
   const [quality, setQuality] = useState<VideoQuality>("high");
   const [mp4Supported, setMp4Supported] = useState(true);
 
-  const hasAnimation = timeline.tracks.length > 0 || animationClips.length > 0;
+  const hasAnimation = timeline.tracks.length > 0 || animationClips.length > 0 || imageOverlays.some(o => o.mediaType === 'video');
   const hasSlides = slides.length > 1;
   const [exportMode, setExportMode] = useState<ExportMode>("animation");
 

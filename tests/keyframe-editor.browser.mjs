@@ -1,0 +1,80 @@
+/* global process, console, window */
+// Run against npm run dev: node tests/keyframe-editor.browser.mjs
+import { chromium } from 'playwright';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+
+(async () => {
+  fs.mkdirSync('.impeccable/review/screenshots', { recursive: true });
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.goto(process.env.STUDIO_URL || 'http://localhost:3000/editor', { waitUntil: 'domcontentloaded', timeout: 120000 });
+  await page.getByRole('button', { name: 'Motion', exact: true }).waitFor({ timeout: 120000 });
+  await page.waitForTimeout(3000);
+  await page.locator('#image-render-card input[type=file]').setInputFiles('public/demo/demo-1.png');
+  await page.waitForTimeout(1500);
+  await page.getByRole('button', { name: 'Motion', exact: true }).click();
+  await page.getByRole('button', { name: 'Create custom animation' }).waitFor();
+  await page.getByRole('button', { name: 'Create custom animation' }).click();
+  const timeline = page.getByRole('region', { name: 'Animation timeline' });
+  await timeline.waitFor();
+  await page.getByRole('button', { name: 'After', exact: true }).click();
+  await page.getByLabel('Scale keyframe value', { exact: true }).fill('1.5');
+  await page.getByRole('button', { name: 'Scale keyframe at 2.00s', exact: true }).click();
+  await page.keyboard.press('Home');
+  await page.keyboard.press('Shift+ArrowRight');
+  await page.getByLabel('Scale keyframe value', { exact: true }).fill('1.1');
+  await page.getByRole('button', { name: /Scale keyframe at 0.17s/ }).click();
+  await page.locator('#motion-easing').selectOption('ease-out-back');
+  await page.getByRole('button', { name: /Scale keyframe at 0.17s/ }).click();
+  await page.keyboard.press('Space');
+  await page.getByRole('button', { name: 'Pause animation' }).waitFor();
+  await page.keyboard.press('Space');
+  await page.getByRole('button', { name: 'Play animation' }).waitFor();
+  await page.getByRole('button', { name: /Scale keyframe at 0.17s/ }).click();
+  await page.keyboard.press('Delete');
+  assert.equal(await page.getByRole('button', { name: /Scale keyframe at 0.17s/ }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Position X (%) keyframe at 0.00s', exact: true }).count(), 1);
+  // Retiming scale must leave the other property diamonds in place.
+  const diamond = page.getByRole('button', { name: 'Scale keyframe at 2.00s', exact: true });
+  await diamond.scrollIntoViewIfNeeded();
+  const d = await diamond.boundingBox();
+  await page.mouse.move(d.x + d.width / 2, d.y + d.height / 2);
+  await page.mouse.down(); await page.mouse.move(d.x - 140, d.y + d.height / 2, { steps: 8 }); await page.mouse.up();
+  assert.equal(await page.getByRole('button', { name: 'Position X (%) keyframe at 2.00s', exact: true }).count(), 1);
+  assert.equal(await page.evaluate(() => window.getSelection().toString()), '');
+  await page.getByLabel('Custom preset name').fill('Brand move');
+  await page.getByRole('button', { name: 'Save custom preset', exact: true }).click();
+  // Scope by title to distinguish saved-card and its delete button.
+  const card = page.locator('button[title="Saved custom motion. Hover to preview; click to add."]').first();
+  await card.scrollIntoViewIfNeeded();
+  const preview = card.locator('[class~="h-3/4"]');
+  const before = await preview.evaluate(e => e.style.transform);
+  await card.hover(); await page.waitForTimeout(350);
+  assert.notEqual(await preview.evaluate(e => e.style.transform), before);
+  await card.click();
+  assert.equal(await page.getByRole('button', { name: 'Select Brand move animation', exact: true }).count(), 1);
+  await page.locator('#motion-transition').selectOption('blend');
+  await page.getByRole('button', { name: 'Camera', exact: true }).first().click();
+  await page.getByRole('button', { name: 'After', exact: true }).click();
+  await page.getByLabel('Camera yaw keyframe value', { exact: true }).fill('15');
+  await page.waitForTimeout(5000);
+  await page.screenshot({ path: '.impeccable/review/screenshots/motion-desktop.png' });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.screenshot({ path: '.impeccable/review/screenshots/motion-compact.png' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: '.impeccable/review/screenshots/motion-mobile.png' });
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  // A selected clip is removed without deleting the asset.
+  await page.getByRole('button', { name: 'Select Camera move animation', exact: true }).click();
+  await page.keyboard.press('Backspace');
+  assert.equal(await page.getByRole('button', { name: 'Select Camera move animation', exact: true }).count(), 0);
+  await page.reload();
+  await page.getByRole('button', { name: 'Motion', exact: true }).click();
+  await card.waitFor();
+  assert.deepEqual(errors, []);
+  console.log('Browser checks passed: independent keyframes, easing, keyboard playback/delete, drag selection, saved preset preview/persistence, transition and camera.');
+  await browser.close();
+})().catch(e => { console.error(e); process.exit(1); });

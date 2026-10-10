@@ -8,7 +8,7 @@ interface KeyframeMarkerProps {
   keyframe: Keyframe;
   position: number; // x position in pixels
   isSelected: boolean;
-  trackType: 'transform' | 'opacity';
+  trackType: 'transform' | 'opacity' | 'camera';
   onSelect: () => void;
   onDrag: (newTime: number) => void;
   onDelete: () => void;

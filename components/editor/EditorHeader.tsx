@@ -71,6 +71,7 @@ export function EditorHeader() {
     slides,
     uploadedImageUrl,
     textOverlays,
+    imageOverlays,
     editorMode,
     mockups,
     clearImage,
@@ -100,7 +101,7 @@ export function EditorHeader() {
     editorMode === "device" && hasVisibleMockups(mockups)
   );
 
-  const hasContent = hasImage || textOverlays.length > 0;
+  const hasContent = hasImage || textOverlays.length > 0 || imageOverlays.length > 0;
 
   // Undo/redo state
   const [canUndo, setCanUndo] = React.useState(false);
@@ -144,7 +145,7 @@ export function EditorHeader() {
 
   const showVideoExport =
     slides.length > 0 ||
-    timeline.tracks.length > 0 ||
+    timeline.tracks.length > 0 || imageOverlays.some(o => o.mediaType === 'video') ||
     animationClips.length > 0;
 
   const {
@@ -484,7 +485,7 @@ export function EditorHeader() {
               </PopoverContent>
             </Popover>
 
-            {hasImage && showVideoExport && !isMobile ? (
+            {hasContent && showVideoExport && !isMobile ? (
               <Button
                 onClick={() => setExportSlideshowOpen(true)}
                 size="sm"

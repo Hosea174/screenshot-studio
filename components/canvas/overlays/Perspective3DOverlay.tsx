@@ -1,8 +1,10 @@
 'use client';
 
+import { ShadowDefinition } from '../html/ShadowDefinition';
 import { Frame3DOverlay, getFrameImageStyle, type FrameConfig } from '../frames/Frame3DOverlay';
 import { type ShadowConfig } from '../utils/shadow-utils';
-import { type ImageFilters } from '@/lib/store';
+import { useImageStore, type ImageFilters } from '@/lib/store';
+import { parseShadowRgb } from '@/lib/drop-shadow';
 
 export interface Perspective3DConfig {
   perspective: number;
@@ -64,6 +66,7 @@ export function Perspective3DOverlay({
   imageOpacity,
   imageFilters,
 }: Perspective3DOverlayProps) {
+  const hasMotion = useImageStore(s => s.timeline.tracks.length > 0);
   if (!has3DTransform) return null;
 
   // Build CSS filter string from imageFilters
@@ -112,31 +115,13 @@ export function Perspective3DOverlay({
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Parse shadow color and extract RGB values
-  const colorMatch = shadow.color.match(/rgba?\(([^)]+)\)/)
-  let r = 0, g = 0, b = 0;
-  let shadowOpacity = shadow.intensity || 0.5;
-
-  if (colorMatch) {
-    const parts = colorMatch[1].split(',').map(s => s.trim())
-    r = parseInt(parts[0]) || 0;
-    g = parseInt(parts[1]) || 0;
-    b = parseInt(parts[2]) || 0;
-    if (parts.length === 4) {
-      shadowOpacity = parseFloat(parts[3]) || shadow.intensity;
-    }
-  } else if (shadow.color.startsWith('#')) {
-    const hex = shadow.color.replace('#', '')
-    r = parseInt(hex.slice(0, 2), 16) || 0;
-    g = parseInt(hex.slice(2, 4), 16) || 0;
-    b = parseInt(hex.slice(4, 6), 16) || 0;
-  }
+  const [r, g, b] = parseShadowRgb(shadow.color);
 
   // Build shadow filter using direct values from store
   const buildShadowFilter = () => {
     const x = shadow.enabled ? (shadow.offsetX ?? 0) : 0;
     const y = shadow.enabled ? (shadow.offsetY ?? 0) : 0;
-    const blur = shadow.enabled ? ((shadow.softness || 15) + (shadow.spread || 0)) : 15;
+    const blur = shadow.enabled ? shadow.softness : 15;
     const opacity = shadow.enabled ? Math.min(1, shadow.intensity) : 0.5;
 
     const shadows = [
@@ -147,7 +132,7 @@ export function Perspective3DOverlay({
     return shadows.join(' ');
   };
 
-  const shadowFilter = buildShadowFilter();
+  const shadowFilter = shadow.enabled ? (shadow.spread > 0 ? 'url(#main-shadow-3d)' : buildShadowFilter()) : undefined;
 
   const isDark = frame.type.includes('dark');
   const isMacFrame = frame.type === 'macos-light' || frame.type === 'macos-dark';
@@ -208,6 +193,7 @@ export function Perspective3DOverlay({
         clipPath: `inset(0 0 0 0)`,
       }}
     >
+      <ShadowDefinition id="main-shadow-3d" shadow={{ enabled: shadow.enabled, blur: shadow.softness, spread: shadow.spread, opacity: shadow.intensity, color: shadow.color, offsetX: shadow.offsetX ?? 0, offsetY: shadow.offsetY ?? 0 }} />
       <div
         style={{
           position: 'absolute',
@@ -218,7 +204,7 @@ export function Perspective3DOverlay({
           transform: perspective3DTransform,
           transformOrigin: 'center center',
           willChange: 'transform',
-          transition: 'transform 0.125s linear',
+          transition: hasMotion ? 'none' : 'transform 0.125s linear',
           filter: shadowFilter,
           opacity: 1,
         }}
@@ -270,4 +256,3 @@ export function Perspective3DOverlay({
     </div>
   );
 }
-

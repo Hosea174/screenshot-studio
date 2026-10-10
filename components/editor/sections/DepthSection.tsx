@@ -1,13 +1,15 @@
 'use client';
+import { ShadowAdjustments, DEFAULT_MEDIA_SHADOW } from '@/components/controls/ShadowAdjustments';
 
+import { addVideoLayer } from '@/lib/video-layers';
+import { toast } from 'sonner';
 import * as React from 'react';
 import { useImageStore } from '@/lib/store';
-import type { ImageOverlay, ImageOverlayTilt, ImageShadow } from '@/lib/store';
+import type { ImageOverlay, ImageOverlayTilt } from '@/lib/store';
 import { SectionWrapper } from './SectionWrapper';
 import { cn } from '@/lib/utils';
 import { Slider } from '@/components/ui/slider';
-import { Switch } from '@/components/ui/switch';
-import { DEFAULT_OVERLAY_SHADOW, DEFAULT_OVERLAY_TILT } from '@/lib/overlay-style';
+import { DEFAULT_OVERLAY_TILT } from '@/lib/overlay-style';
 import { getR2ImageUrl } from '@/lib/r2';
 import { getOverlayUrl } from '@/lib/r2-overlays';
 import { isOverlayPath } from '@/lib/r2-overlays';
@@ -108,7 +110,7 @@ export function DepthSection() {
     // Image overlays (array order = z-order, first = bottom)
     imageOverlays.forEach((overlay, i) => {
       const isR2 = isOverlayPath(overlay.src) || (typeof overlay.src === 'string' && overlay.src.startsWith('overlays/'));
-      const thumbSrc = isR2 && !overlay.isCustom ? getR2ImageUrl({ src: overlay.src }) : overlay.src;
+      const thumbSrc = overlay.mediaType === 'video' ? overlay.poster : isR2 && !overlay.isCustom ? getR2ImageUrl({ src: overlay.src }) : overlay.src;
       // Derive a readable label from the filename
       const nameFromPath = overlay.src.startsWith('/')
         ? overlay.src.split('/').pop()?.replace(/\.\w+$/, '').replace(/[-_][A-Za-z0-9]{6,}$/, '').replace(/[-_]/g, ' ').trim() ?? `Asset ${i + 1}`
@@ -116,7 +118,7 @@ export function DepthSection() {
       items.push({
         id: overlay.id,
         type: 'image-overlay',
-        label: nameFromPath || (overlay.isCustom ? `Upload ${i + 1}` : `Overlay ${i + 1}`),
+        label: overlay.mediaType === 'video' ? `Video ${i + 1}` : nameFromPath || (overlay.isCustom ? `Upload ${i + 1}` : `Overlay ${i + 1}`),
         isVisible: overlay.isVisible,
         thumbnailSrc: thumbSrc,
         layerPosition: overlay.layer || 'front',
@@ -157,10 +159,15 @@ export function DepthSection() {
   }, [imageOverlays, textOverlays, annotations, blurRegions]);
 
   // Handle file upload for custom overlay
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (file.type.startsWith('video/')) {
+      e.target.value = '';
+      try { await addVideoLayer(file); } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not add video'); }
+      return;
+    }
     const blobUrl = URL.createObjectURL(file);
     addImageOverlay({
       src: blobUrl,
@@ -472,12 +479,12 @@ export function DepthSection() {
             className="w-full flex items-center justify-center gap-2 py-2.5 rounded-md border border-dashed border-foreground/15 hover:border-foreground/30 hover:bg-foreground/[0.04] text-muted-foreground hover:text-foreground transition-all duration-150"
           >
             <Upload04Icon size={16} />
-            <span className="text-xs font-medium">Upload Image</span>
+            <span className="text-xs font-medium">Upload image or video</span>
           </button>
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept="image/*,video/mp4,video/webm,video/quicktime"
             onChange={handleFileUpload}
             className="hidden"
           />
@@ -619,6 +626,13 @@ function OverlayProperties({
 
       <OverlayCornerRadiusControls overlay={overlay} onUpdate={onUpdate} />
       <OverlayTiltControls overlay={overlay} onUpdate={onUpdate} />
+      {overlay.mediaType === 'video' && <div className="space-y-3 border-t border-border pt-3">
+        <p className="text-xs font-medium">Video timing · muted</p>
+        <Slider label="Start on timeline" min={0} max={30} step={0.1} value={[(overlay.startTime ?? 0) / 1000]} valueDisplay={`${(overlay.startTime ?? 0) / 1000}s`} onValueChange={([start]) => onUpdate({ startTime: start * 1000 })} />
+        <Slider label="Trim in" min={0} max={Math.max(0, (overlay.mediaDuration ?? 0) - 0.1)} step={0.1} value={[overlay.trimStart ?? 0]} valueDisplay={`${overlay.trimStart ?? 0}s`} onValueChange={([trimStart]) => onUpdate({ trimStart })} />
+        <Slider label="Speed" min={0.25} max={3} step={0.25} value={[overlay.playbackRate ?? 1]} valueDisplay={`${overlay.playbackRate ?? 1}×`} onValueChange={([playbackRate]) => onUpdate({ playbackRate })} />
+        <label className="flex items-center justify-between text-xs text-muted-foreground">Loop video<input type="checkbox" checked={overlay.loop ?? false} onChange={e => onUpdate({ loop: e.target.checked })} /></label>
+      </div>}
       <OverlayShadowControls overlay={overlay} onUpdate={onUpdate} />
 
       <div className="space-y-1.5">
@@ -727,60 +741,6 @@ function OverlayTiltControls({ overlay, onUpdate }: OverlayControlProps) {
 }
 
 function OverlayShadowControls({ overlay, onUpdate }: OverlayControlProps) {
-  const shadow = overlay.shadow ?? DEFAULT_OVERLAY_SHADOW;
-  const setShadow = (updates: Partial<ImageShadow>) =>
-    onUpdate({ shadow: { ...shadow, ...updates } });
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-muted-foreground">Shadow</span>
-        <Switch
-          checked={shadow.enabled}
-          onCheckedChange={(enabled) => setShadow({ enabled })}
-          aria-label="Toggle overlay shadow"
-        />
-      </div>
-      {shadow.enabled && (
-        <>
-          <Slider
-            value={[shadow.blur]}
-            onValueChange={(v) => setShadow({ blur: v[0] })}
-            min={0}
-            max={60}
-            step={1}
-            label="Blur"
-            valueDisplay={`${shadow.blur}px`}
-          />
-          <Slider
-            value={[shadow.offsetX]}
-            onValueChange={(v) => setShadow({ offsetX: v[0] })}
-            min={-50}
-            max={50}
-            step={1}
-            label="Offset X"
-            valueDisplay={`${shadow.offsetX}px`}
-          />
-          <Slider
-            value={[shadow.offsetY]}
-            onValueChange={(v) => setShadow({ offsetY: v[0] })}
-            min={-50}
-            max={50}
-            step={1}
-            label="Offset Y"
-            valueDisplay={`${shadow.offsetY}px`}
-          />
-          <Slider
-            value={[shadow.opacity]}
-            onValueChange={(v) => setShadow({ opacity: v[0] })}
-            min={0}
-            max={1}
-            step={0.01}
-            label="Opacity"
-            valueDisplay={`${Math.round(shadow.opacity * 100)}%`}
-          />
-        </>
-      )}
-    </div>
-  );
+  const shadow = overlay.shadow ?? DEFAULT_MEDIA_SHADOW;
+  return <ShadowAdjustments shadow={shadow} onChange={updates => onUpdate({ shadow: { ...shadow, ...updates } })} />;
 }

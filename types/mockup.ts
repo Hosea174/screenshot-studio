@@ -43,6 +43,7 @@ export interface DeviceScreenContent {
 }
 
 export interface Mockup {
+  shadow?: { enabled: boolean; blur: number; spread: number; color: string; opacity: number; offsetX: number; offsetY: number };
   id: string;
   definitionId: string;
   position: { x: number; y: number };

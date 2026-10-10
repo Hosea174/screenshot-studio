@@ -122,6 +122,8 @@ function EditorMain() {
     editorMode,
     showTimeline,
     toggleTimeline,
+    imageOverlays,
+    textOverlays,
   } = useImageStore();
 
   // enable autosave
@@ -132,7 +134,7 @@ function EditorMain() {
   ) && shouldRenderSourceImage(editorMode, mockups);
   const hasContent = hasSourceContent || (
     editorMode === "device" && hasVisibleMockups(mockups)
-  );
+  ) || imageOverlays.length > 0 || textOverlays.length > 0;
   const isUsingTemplateDemo = editorMode === "device"
     ? hasTemplateDemoMedia(mockups.map((mockup) => mockup.screen))
     : isTemplateDemoMedia(uploadedImageUrl, imageName);

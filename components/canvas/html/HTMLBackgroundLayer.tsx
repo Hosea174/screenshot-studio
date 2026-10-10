@@ -230,6 +230,7 @@ export function HTMLBackgroundLayer({
         style={{
           ...sharedStyle,
           ...layerAStyle,
+          filter: [layerAStyle.filter, backgroundBlur > 0 ? `blur(${backgroundBlur}px)` : undefined].filter(Boolean).join(' '),
           zIndex: 0,
           transition: transitionStyle,
           opacity: activeLayer === 'a' ? (layerAStyle.opacity ?? 1) : 0,
@@ -242,6 +243,7 @@ export function HTMLBackgroundLayer({
         style={{
           ...sharedStyle,
           ...layerBStyle,
+          filter: [layerBStyle.filter, backgroundBlur > 0 ? `blur(${backgroundBlur}px)` : undefined].filter(Boolean).join(' '),
           zIndex: 0,
           transition: transitionStyle,
           opacity: activeLayer === 'b' ? (layerBStyle.opacity ?? 1) : 0,

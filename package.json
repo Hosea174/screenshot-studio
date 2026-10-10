@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "tsx --test tests/*.test.ts",
+    "test:browser": "node tests/keyframe-editor.browser.mjs && node tests/video-layer.browser.mjs",
     "verify:agents": "tsx tests/verify-agent-endpoints.ts",
     "lint:fix": "eslint . --fix",
     "upload-to-r2": "tsx scripts/upload-to-r2.ts",

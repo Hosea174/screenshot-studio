@@ -4,6 +4,7 @@ import type {
   AnimationTrack,
   EasingFunction,
 } from '@/types/animation';
+import { DEFAULT_ANIMATABLE_PROPERTIES } from '@/types/animation';
 import { getPresetById } from './presets';
 
 export type AnimatedTemplateCategory = 'reveals' | 'camera-moves';
@@ -47,10 +48,10 @@ export const ANIMATED_TEMPLATES: AnimatedTemplate[] = [
     duration: 8000,
     accent: 'var(--chart-2)',
     keyframes: [
-      { time: 0, properties: { perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 6, scale: 0.98, imageOpacity: 0 }, easing: 'ease-out' },
-      { time: 700, properties: { perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 0, scale: 1, imageOpacity: 1 }, easing: 'ease-out-cubic' },
-      { time: 6500, properties: { perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: -1, scale: 1.025, imageOpacity: 1 }, easing: 'ease-in-out' },
-      { time: 8000, properties: { perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 0, scale: 1.02, imageOpacity: 1 }, easing: 'ease-in-out' },
+      { time: 0, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 6, scale: 0.98, imageOpacity: 0 }, easing: 'ease-out' },
+      { time: 700, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 0, scale: 1, imageOpacity: 1 }, easing: 'ease-out-cubic' },
+      { time: 6500, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: -1, scale: 1.025, imageOpacity: 1 }, easing: 'ease-in-out' },
+      { time: 8000, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 0, scale: 1.02, imageOpacity: 1 }, easing: 'ease-in-out' },
     ],
   },
   {
@@ -63,10 +64,10 @@ export const ANIMATED_TEMPLATES: AnimatedTemplate[] = [
     duration: 8000,
     accent: 'var(--chart-1)',
     keyframes: [
-      { time: 0, properties: { perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 0, scale: 1.1, imageOpacity: 0 }, easing: 'ease-out' },
-      { time: 800, properties: { perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 0, scale: 1.04, imageOpacity: 1 }, easing: 'ease-out-cubic' },
-      { time: 6500, properties: { perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 0, scale: 1, imageOpacity: 1 }, easing: 'ease-in-out' },
-      { time: 8000, properties: { perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 0, scale: 1, imageOpacity: 1 }, easing: 'ease-in-out' },
+      { time: 0, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 0, scale: 1.1, imageOpacity: 0 }, easing: 'ease-out' },
+      { time: 800, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 0, scale: 1.04, imageOpacity: 1 }, easing: 'ease-out-cubic' },
+      { time: 6500, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 0, scale: 1, imageOpacity: 1 }, easing: 'ease-in-out' },
+      { time: 8000, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 0, scale: 1, imageOpacity: 1 }, easing: 'ease-in-out' },
     ],
   },
   {
@@ -79,10 +80,10 @@ export const ANIMATED_TEMPLATES: AnimatedTemplate[] = [
     duration: 8000,
     accent: 'var(--chart-3)',
     keyframes: [
-      { time: 0, properties: { perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 10, translateY: 0, scale: 0.99, imageOpacity: 0 }, easing: 'ease-out' },
-      { time: 850, properties: { perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 0, scale: 1, imageOpacity: 1 }, easing: 'ease-out-cubic' },
-      { time: 6500, properties: { perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: -2, translateY: 0, scale: 1.025, imageOpacity: 1 }, easing: 'ease-in-out' },
-      { time: 8000, properties: { perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 0, scale: 1.02, imageOpacity: 1 }, easing: 'ease-in-out' },
+      { time: 0, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 10, translateY: 0, scale: 0.99, imageOpacity: 0 }, easing: 'ease-out' },
+      { time: 850, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 0, scale: 1, imageOpacity: 1 }, easing: 'ease-out-cubic' },
+      { time: 6500, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: -2, translateY: 0, scale: 1.025, imageOpacity: 1 }, easing: 'ease-in-out' },
+      { time: 8000, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 0, scale: 1.02, imageOpacity: 1 }, easing: 'ease-in-out' },
     ],
   },
   {
@@ -95,9 +96,9 @@ export const ANIMATED_TEMPLATES: AnimatedTemplate[] = [
     duration: 10000,
     accent: 'var(--chart-2)',
     keyframes: [
-      { time: 0, properties: { perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 0, scale: 1, imageOpacity: 1 }, easing: 'ease-in-out' },
-      { time: 5000, properties: { perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: -1, scale: 1.045, imageOpacity: 1 }, easing: 'ease-in-out' },
-      { time: 10000, properties: { perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: -2, scale: 1.08, imageOpacity: 1 }, easing: 'ease-in-out' },
+      { time: 0, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: 0, scale: 1, imageOpacity: 1 }, easing: 'ease-in-out' },
+      { time: 5000, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: -1, scale: 1.045, imageOpacity: 1 }, easing: 'ease-in-out' },
+      { time: 10000, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 0, translateY: -2, scale: 1.08, imageOpacity: 1 }, easing: 'ease-in-out' },
     ],
   },
   {
@@ -111,8 +112,8 @@ export const ANIMATED_TEMPLATES: AnimatedTemplate[] = [
     duration: 10000,
     accent: 'var(--chart-1)',
     keyframes: [
-      { time: 0, properties: { perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 18, translateY: 0, scale: 1.45, imageOpacity: 1 }, easing: 'ease-in-out' },
-      { time: 10000, properties: { perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: -18, translateY: 0, scale: 1.45, imageOpacity: 1 }, easing: 'ease-in-out' },
+      { time: 0, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: 18, translateY: 0, scale: 1.45, imageOpacity: 1 }, easing: 'ease-in-out' },
+      { time: 10000, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 0, rotateY: 0, rotateZ: 0, translateX: -18, translateY: 0, scale: 1.45, imageOpacity: 1 }, easing: 'ease-in-out' },
     ],
   },
   {
@@ -125,9 +126,9 @@ export const ANIMATED_TEMPLATES: AnimatedTemplate[] = [
     duration: 9000,
     accent: 'var(--chart-3)',
     keyframes: [
-      { time: 0, properties: { perspective: 2400, rotateX: 0, rotateY: -1, rotateZ: 0, translateX: 1, translateY: 1, scale: 1.01, imageOpacity: 1 }, easing: 'ease-in-out' },
-      { time: 4500, properties: { perspective: 2400, rotateX: 1, rotateY: 1, rotateZ: 0, translateX: -1, translateY: -1, scale: 1.035, imageOpacity: 1 }, easing: 'ease-in-out' },
-      { time: 9000, properties: { perspective: 2400, rotateX: 0, rotateY: -1, rotateZ: 0, translateX: 1, translateY: 1, scale: 1.01, imageOpacity: 1 }, easing: 'ease-in-out' },
+      { time: 0, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 0, rotateY: -1, rotateZ: 0, translateX: 1, translateY: 1, scale: 1.01, imageOpacity: 1 }, easing: 'ease-in-out' },
+      { time: 4500, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 1, rotateY: 1, rotateZ: 0, translateX: -1, translateY: -1, scale: 1.035, imageOpacity: 1 }, easing: 'ease-in-out' },
+      { time: 9000, properties: { ...DEFAULT_ANIMATABLE_PROPERTIES, perspective: 2400, rotateX: 0, rotateY: -1, rotateZ: 0, translateX: 1, translateY: 1, scale: 1.01, imageOpacity: 1 }, easing: 'ease-in-out' },
     ],
   },
 ];

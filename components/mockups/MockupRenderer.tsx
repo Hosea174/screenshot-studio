@@ -1,4 +1,6 @@
 "use client";
+import { ShadowDefinition } from "@/components/canvas/html/ShadowDefinition";
+import { DEFAULT_MEDIA_SHADOW } from "@/components/controls/ShadowAdjustments";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import Moveable from "react-moveable";
@@ -231,11 +233,13 @@ function MockupRenderer({ mockup, canvasWidth, canvasHeight, zIndex }: MockupRen
           transform: `rotate(${mockup.rotation}deg)`,
           transformOrigin: "center",
           opacity: mockup.opacity,
+          filter: (mockup.shadow ?? DEFAULT_MEDIA_SHADOW).enabled ? `url(#shadow-${mockup.id})` : undefined,
           pointerEvents: "auto",
           cursor: isEditingScreen ? "move" : "grab",
           zIndex,
         }}
       >
+        <ShadowDefinition id={`shadow-${mockup.id}`} shadow={mockup.shadow ?? DEFAULT_MEDIA_SHADOW} />
         <DeviceShell
           definition={definition}
           screen={mockup.screen}

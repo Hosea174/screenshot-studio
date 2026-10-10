@@ -8,7 +8,7 @@ export function shouldIgnoreEditorShortcut(event: {
   return event.defaultPrevented || !!event.isComposing || (
     target instanceof HTMLElement && (
       target.isContentEditable ||
-      !!target.closest('input, textarea, select, [role="dialog"], [role="alertdialog"]')
+      !!target.closest('input, textarea, select, [role="slider"], [role="dialog"], [role="alertdialog"]')
     )
   );
 }

@@ -1,7 +1,12 @@
 'use client';
 
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react';
+import { ShadowDefinition } from './ShadowDefinition';
+import { VideoLayerMedia } from './VideoLayerMedia';
 import Moveable from 'react-moveable';
+import { useImageStore } from '@/lib/store';
+import { getClipInterpolatedProperties } from '@/lib/animation/interpolation';
+import { DEFAULT_ANIMATABLE_PROPERTIES } from '@/types/animation';
 import type { ImageOverlay } from '@/lib/store';
 import { cn } from '@/lib/utils';
 import {
@@ -45,6 +50,9 @@ function OverlayElement({
   onSelect: () => void;
   elRef?: (el: HTMLDivElement | null) => void;
 }) {
+  const timeline = useImageStore(s => s.timeline);
+  const clips = useImageStore(s => s.animationClips);
+  const motion = getClipInterpolatedProperties(clips, timeline.tracks, timeline.playhead, DEFAULT_ANIMATABLE_PROPERTIES, overlay.id);
   const isShadow = useMemo(
     () => typeof overlay.src === 'string' && overlay.src.includes('overlay-shadow'),
     [overlay.src]
@@ -60,7 +68,7 @@ function OverlayElement({
         style={{
           position: 'absolute',
           inset: 0,
-          opacity: overlay.opacity,
+          opacity: overlay.opacity * motion.imageOpacity * (overlay.mediaType === 'video' && timeline.playhead < (overlay.startTime ?? 0) ? 0 : 1),
           userSelect: 'none',
           zIndex: 5,
           pointerEvents: 'none',
@@ -100,15 +108,17 @@ function OverlayElement({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        transform: `rotate(${overlay.rotation}deg)`,
+        transform: `perspective(${motion.perspective}px) translate(${motion.translateX}%, ${motion.translateY}%) rotateX(${motion.rotateX}deg) rotateY(${motion.rotateY}deg) rotate(${overlay.rotation + motion.rotateZ}deg) scale(${motion.scale})`,
         perspective: hasOverlayTilt(overlay.tilt) ? `${overlay.tilt.perspective}px` : undefined,
-        opacity: overlay.opacity,
+        opacity: overlay.opacity * motion.imageOpacity * (overlay.mediaType === 'video' && timeline.playhead < (overlay.startTime ?? 0) ? 0 : 1),
         filter: (overlay.blur ?? 0) > 0 ? `blur(${overlay.blur}px)` : undefined,
         cursor: 'grab',
         userSelect: 'none',
         pointerEvents: 'auto',
       }}
     >
+      {overlay.shadow?.enabled && <ShadowDefinition id={`shadow-${overlay.id}`} shadow={overlay.shadow} />}
+      {overlay.mediaType === 'video' ? <VideoLayerMedia overlay={overlay} style={{ width: `${fitted.width}%`, height: `${fitted.height}%`, objectFit: 'contain', display: 'block', borderRadius: overlay.radius ? `${overlay.radius}px` : undefined, filter: overlay.shadow?.enabled && (overlay.shadow.spread ?? 0) > 0 ? `url(#shadow-${overlay.id})` : buildOverlayShadowFilter(overlay.shadow), transform: imageTransform || undefined, pointerEvents: 'none' }} /> : (
       <img
         src={overlayImg.src}
         alt="Overlay"
@@ -119,11 +129,12 @@ function OverlayElement({
           objectFit: 'contain',
           display: 'block',
           borderRadius: overlay.radius ? `${overlay.radius}px` : undefined,
-          filter: buildOverlayShadowFilter(overlay.shadow),
+          filter: overlay.shadow?.enabled && (overlay.shadow.spread ?? 0) > 0 ? `url(#shadow-${overlay.id})` : buildOverlayShadowFilter(overlay.shadow),
           transform: imageTransform || undefined,
           pointerEvents: 'none',
         }}
       />
+      )}
     </div>
   );
 }

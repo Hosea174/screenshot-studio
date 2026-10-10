@@ -784,6 +784,7 @@ export function clonePresetTracks(
     originalDuration: preset.duration,
     keyframes: track.keyframes.map((kf) => ({
       ...kf,
+      properties: { ...kf.properties },
       id: generateId('kf'),
       // Offset keyframe time by the clip's start time
       time: kf.time + startTime,

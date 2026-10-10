@@ -2,6 +2,7 @@
 
 import { useRef, useState, useCallback, useMemo, useEffect } from 'react';
 import { type ShadowConfig } from '../utils/shadow-utils';
+import { ShadowDefinition } from './ShadowDefinition';
 import { buildDropShadowFilter as buildSharedDropShadowFilter, parseShadowRgb } from '@/lib/drop-shadow';
 import { type ImageFilters, useImageStore } from '@/lib/store';
 import { SafariToolbar, ChromeToolbar } from '../frames/BrowserToolbar';
@@ -112,11 +113,11 @@ function buildBoxShadow(shadow: ShadowConfig): string | undefined {
 
   const x = offsetX ?? 0;
   const y = offsetY ?? 0;
-  const blur = softness + (spread || 0);
+  const blur = softness;
   const opacity = Math.min(1, Math.max(0, intensity));
 
   return [
-    `${x}px ${y}px ${blur}px rgba(${r}, ${g}, ${b}, ${opacity})`,
+    `${x}px ${y}px ${blur}px ${Math.max(0, spread)}px rgba(${r}, ${g}, ${b}, ${opacity})`,
     `0px 0px ${blur * 0.5}px rgba(${r}, ${g}, ${b}, ${opacity * 0.2})`,
   ].join(', ');
 }
@@ -161,7 +162,7 @@ export function HTMLMainImageLayer({
   const imageFilter = useMemo(() => buildImageFilter(imageFilters), [imageFilters]);
   const isStyleFrame = ['glass-light', 'glass-dark', 'outline-light', 'border-light', 'border-dark'].includes(frame.type);
   // Style frames use box-shadow on the frame container; others use drop-shadow filter on the outer div
-  const shadowFilter = useMemo(() => isStyleFrame ? undefined : buildDropShadowFilter(shadow), [shadow, isStyleFrame]);
+  const shadowFilter = useMemo(() => isStyleFrame || !shadow.enabled ? undefined : shadow.spread > 0 ? 'url(#main-shadow-flat)' : buildDropShadowFilter(shadow), [shadow, isStyleFrame]);
   const frameBoxShadow = useMemo(() => isStyleFrame ? buildBoxShadow(shadow) : undefined, [shadow, isStyleFrame]);
 
   const isDark = frame.type.includes('dark');
@@ -529,6 +530,7 @@ export function HTMLMainImageLayer({
         filter: shadowFilter,
       }}
     >
+      <ShadowDefinition id="main-shadow-flat" shadow={{ enabled: shadow.enabled, blur: shadow.softness, spread: shadow.spread, opacity: shadow.intensity, color: shadow.color, offsetX: shadow.offsetX ?? 0, offsetY: shadow.offsetY ?? 0 }} />
       {/* Frame container */}
       <div style={getFrameContainerStyle()}>
         {/* macOS title bar */}

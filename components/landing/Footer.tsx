@@ -127,7 +127,7 @@ export function Footer({ brandName = "Screenshot Studio" }: FooterProps) {
               <a
                 href="https://usefulshelf.co/apps/screenshot-studio?utm_source=screenshot-studio&utm_medium=referral&utm_campaign=badge&utm_content=lime"
                 target="_blank"
-                rel="noopener"
+                rel="noopener noreferrer"
               >
                 <img
                   src="https://usefulshelf.co/badge/screenshot-studio.svg?theme=lime"

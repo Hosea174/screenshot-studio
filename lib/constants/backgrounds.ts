@@ -10,6 +10,7 @@ export interface BackgroundConfig {
   type: BackgroundType;
   value: GradientKey | SolidColorKey | string;
   opacity?: number;
+  hsl?: { hue: number; saturation: number; lightness: number };
 }
 
 const isCssGradient = (value: string): boolean =>
@@ -122,6 +123,7 @@ export const getBackgroundCSS = (
 
       return {
         backgroundImage: `url(${imageUrl})`,
+        filter: `hue-rotate(${config.hsl?.hue ?? 0}deg) saturate(${(config.hsl?.saturation ?? 100) / 100}) brightness(${(config.hsl?.lightness ?? 100) / 100})`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',
         backgroundRepeat: 'no-repeat',

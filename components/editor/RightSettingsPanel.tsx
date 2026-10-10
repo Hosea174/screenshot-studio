@@ -4,8 +4,6 @@ import * as React from 'react';
 import {
   RotateSquareIcon,
   VideoReplayIcon,
-  Delete02Icon,
-  Add01Icon,
 } from 'hugeicons-react';
 import {
   TransformsGallery,
@@ -13,8 +11,7 @@ import {
 } from './sections';
 import { cn } from '@/lib/utils';
 import { useImageStore, useEditorStore } from '@/lib/store';
-import { ANIMATION_PRESETS, CATEGORY_LABELS } from '@/lib/animation/presets';
-import type { AnimationPreset } from '@/types/animation';
+import { AnimationPresetGallery } from '@/components/timeline/AnimationPresetGallery';
 import { Slider } from '@/components/ui/slider';
 import { Button } from '@/components/ui/button';
 import { SegmentedControl } from '@/components/ui/segmented-control';
@@ -406,162 +403,7 @@ function TransformControls() {
 
 // ─── Animation Tab (same pattern as 3D) ────────────────────────────────────
 
-const ANIM_PRESET_BY_CATEGORY = ANIMATION_PRESETS.reduce(
-  (acc, preset) => {
-    if (!acc[preset.category]) {
-      acc[preset.category] = [];
-    }
-    acc[preset.category].push(preset);
-    return acc;
-  },
-  {} as Record<string, AnimationPreset[]>
-);
-
-function AnimationControls() {
-  const {
-    uploadedImageUrl,
-    backgroundConfig,
-    borderRadius,
-    imageShadow,
-    animationClips,
-    addAnimationClip,
-    clearAnimationClips,
-    setShowTimeline,
-    setTimelineDuration,
-    timeline,
-  } = useImageStore();
-
-  const { screenshot } = useEditorStore();
-  const cssAspectRatio = useCanvasAspectRatio();
-  const previewImageUrl = uploadedImageUrl || screenshot?.src || null;
-  const firstCategory = Object.keys(ANIM_PRESET_BY_CATEGORY)[0];
-
-  const handlePresetClick = (preset: AnimationPreset) => {
-    const lastClipEnd = animationClips.reduce((max, clip) => {
-      return Math.max(max, clip.startTime + clip.duration);
-    }, 0);
-    const newEndTime = lastClipEnd + preset.duration;
-    if (newEndTime > timeline.duration) {
-      setTimelineDuration(newEndTime);
-    }
-    addAnimationClip(preset.id, lastClipEnd);
-    setShowTimeline(true);
-  };
-
-  const backgroundStyle = getBackgroundCSS(backgroundConfig, 384);
-  const hasAnimation = animationClips.length > 0;
-
-  return (
-    <div className="space-y-1">
-      {hasAnimation && (
-        <div className="flex items-center justify-between px-2 py-1.5 mb-2 rounded-md bg-foreground/5 border border-foreground/10">
-          <span className="text-xs font-medium text-foreground">
-            {animationClips.length} clip{animationClips.length > 1 ? 's' : ''}
-          </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 px-2 text-[10px] text-destructive hover:text-destructive hover:bg-destructive/10"
-            onClick={clearAnimationClips}
-          >
-            <Delete02Icon size={12} className="mr-1" />
-            Clear
-          </Button>
-        </div>
-      )}
-
-      {Object.entries(ANIM_PRESET_BY_CATEGORY).map(([category, presets]) => {
-        const categoryLabel = CATEGORY_LABELS[category as keyof typeof CATEGORY_LABELS] || category;
-        return (
-          <SectionWrapper
-            key={category}
-            title={categoryLabel}
-            defaultOpen={category === firstCategory}
-          >
-            <div className="space-y-2">
-              {presets.map((preset) => {
-                const isApplied = animationClips.some((c) => c.presetId === preset.id);
-                return (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    onClick={() => handlePresetClick(preset)}
-                    className={cn(
-                      'relative w-full rounded-md overflow-hidden transition-all duration-200 group/card cursor-pointer',
-                      'border',
-                      isApplied
-                        ? 'border-primary ring-1 ring-foreground/20'
-                        : 'border-foreground/10 hover:border-foreground/20'
-                    )}
-                    style={{ aspectRatio: cssAspectRatio }}
-                  >
-                    <div className="absolute inset-0" style={backgroundStyle} />
-
-                    <div className="absolute inset-0 flex items-center justify-center p-2">
-                      {previewImageUrl ? (
-                        <div className="w-[85%] h-[85%]">
-                          <img
-                            src={previewImageUrl}
-                            alt={preset.name}
-                            className="w-full h-full object-contain"
-                            style={{
-                              borderRadius: `${Math.min(borderRadius, 6)}px`,
-                              boxShadow: imageShadow.enabled
-                                ? 'var(--shadow-lg)'
-                                : undefined,
-                            }}
-                          />
-                        </div>
-                      ) : (
-                        <div className="w-[85%] h-[85%] bg-foreground/[0.08] rounded-md border border-foreground/10" />
-                      )}
-                    </div>
-
-                    <div className="absolute inset-0 bg-background/40 opacity-0 group-hover/card:opacity-100 transition-opacity flex items-center justify-center">
-                      <div className="bg-foreground/[0.12] border border-foreground/15 rounded-md p-2">
-                        <Add01Icon size={16} className="text-foreground" />
-                      </div>
-                    </div>
-
-                    <div className="absolute top-1.5 right-1.5 px-1.5 py-0.5 bg-background/80 border border-foreground/10 rounded-md text-[9px] font-medium text-muted-foreground">
-                      {(preset.duration / 1000).toFixed(1)}s
-                    </div>
-
-                    <div
-                      className={cn(
-                        'absolute bottom-0 inset-x-0 flex justify-center pb-1.5 transition-opacity duration-150',
-                        isApplied ? 'opacity-100' : 'opacity-0 group-hover/card:opacity-100'
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          'px-2 py-0.5 rounded-md text-[10px] font-medium border',
-                          isApplied
-                            ? 'bg-card text-foreground border-foreground/20'
-                            : 'bg-background/90 text-muted-foreground border-foreground/10'
-                        )}
-                      >
-                        {preset.name}
-                      </span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </SectionWrapper>
-        );
-      })}
-
-      {!previewImageUrl && (
-        <div className="p-3 rounded-md bg-foreground/[0.04] border border-foreground/10 text-center">
-          <p className="text-xs text-muted-foreground">
-            Upload an image to see animation previews
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}
+function AnimationControls() { return <AnimationPresetGallery />; }
 
 // ─── Main Panel ─────────────────────────────────────────────────────────────
 

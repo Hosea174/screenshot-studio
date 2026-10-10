@@ -10,6 +10,12 @@ import { DEFAULT_ANIMATABLE_PROPERTIES } from '@/types/animation';
 // Easing functions - take progress (0-1) and return eased progress (0-1)
 export const easingFunctions: Record<EasingFunction, (t: number) => number> = {
   linear: (t) => t,
+  hold: (t) => t === 1 ? 1 : 0,
+  'ease-in-out-cubic': (t) => t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2,
+  'ease-in-out-sine': (t) => -(Math.cos(Math.PI * t) - 1) / 2,
+  'ease-out-quint': (t) => 1 - (1 - t) ** 5,
+  'ease-out-back': (t) => t === 0 || t === 1 ? t : 1 + 2.70158 * (t - 1) ** 3 + 1.70158 * (t - 1) ** 2,
+  'ease-out-elastic': (t) => t === 0 || t === 1 ? t : 2 ** (-10 * t) * Math.sin((t * 10 - 0.75) * (2 * Math.PI / 3)) + 1,
 
   'ease-in': (t) => t * t,
 
@@ -64,7 +70,7 @@ export function findSurroundingKeyframes(
   }
 
   // Sort keyframes by time
-  const sorted = [...keyframes].sort((a, b) => a.time - b.time);
+  const sorted = [...new Map(keyframes.map(k => [k.time, k])).values()].sort((a, b) => a.time - b.time);
 
   // Find surrounding keyframes
   let prev: Keyframe | null = null;
@@ -92,7 +98,7 @@ export function getInterpolatedProperty<K extends keyof AnimatableProperties>(
   propertyKey: K,
   defaultValue: AnimatableProperties[K]
 ): AnimatableProperties[K] {
-  const { prev, next } = findSurroundingKeyframes(track.keyframes, time);
+  const { prev, next } = findSurroundingKeyframes(track.keyframes.filter(kf => kf.properties[propertyKey] !== undefined), time);
 
   // No keyframes
   if (!prev && !next) {
@@ -216,86 +222,36 @@ export function getClipInterpolatedProperties(
   clips: AnimationClip[],
   tracks: AnimationTrack[],
   time: number,
-  defaults: AnimatableProperties = DEFAULT_ANIMATABLE_PROPERTIES
+  defaults: AnimatableProperties = DEFAULT_ANIMATABLE_PROPERTIES,
+  target: string = 'asset'
 ): AnimatableProperties {
-  const result: AnimatableProperties = { ...defaults };
-
-  // Find all clips that are active at the current time
-  const activeClips = clips.filter(clip =>
-    time >= clip.startTime && time < clip.startTime + clip.duration
-  );
-
-  // If no active clips, check if there's a clip that just ended — hold its last value
-  if (activeClips.length === 0) {
-    if (clips.length > 0 && time >= clips[clips.length - 1].startTime + clips[clips.length - 1].duration) {
-      const lastClip = clips[clips.length - 1];
-      const clipTracks = tracks.filter(t => t.clipId === lastClip.id);
-      if (clipTracks.length > 0) {
-        for (const track of clipTracks) {
-          if (!track.isVisible) continue;
-          const lastKf = track.keyframes[track.keyframes.length - 1];
-          if (!lastKf) continue;
-          for (const key of Object.keys(lastKf.properties) as Array<keyof AnimatableProperties>) {
-            const val = lastKf.properties[key];
-            if (val !== undefined) result[key] = val;
-          }
-        }
-      }
-    }
-    return result;
-  }
-
-  // Sort active clips by start time (earlier clips first)
-  // Later clips (higher start time) will override properties
-  const sortedActiveClips = [...activeClips].sort((a, b) => a.startTime - b.startTime);
-
-  // Track which properties are animated by which clips
-  // Later clips override earlier ones for the same property
-  const propertyToClip = new Map<keyof AnimatableProperties, AnimationClip>();
-
-  for (const clip of sortedActiveClips) {
-    const clipTracks = tracks.filter(t => t.clipId === clip.id);
-
-    // Find all properties this clip animates
-    for (const track of clipTracks) {
-      if (!track.isVisible) continue;
-
-      for (const kf of track.keyframes) {
-        for (const key of Object.keys(kf.properties) as Array<keyof AnimatableProperties>) {
-          propertyToClip.set(key, clip);
-        }
-      }
-    }
-  }
-
-  // Now interpolate each property from its owning clip
-  for (const [property, clip] of propertyToClip) {
+  // Keyframe times are absolute timeline milliseconds, including moved/stretched clips.
+  // Evaluate each property independently so sparse keys and hidden tracks cannot reset it.
+  const result = getInterpolatedProperties(tracks.filter(t => !t.clipId && target === 'asset'), time, defaults);
+  const ordered = clips.filter(c => (c.target ?? 'asset') === target).sort((a, b) => a.startTime - b.startTime || a.id.localeCompare(b.id));
+  for (const clip of ordered) {
+    if (time < clip.startTime) continue;
     const clipTracks = tracks.filter(t => t.clipId === clip.id && t.isVisible);
-    const localTime = time - clip.startTime;
-    const originalDuration = clipTracks[0]?.originalDuration || clip.duration;
-
-    // Calculate time scale for stretched/compressed clips
-    const timeScale = originalDuration > 0 ? originalDuration / clip.duration : 1;
-    const scaledTime = localTime * timeScale;
-
-    // Find the track that animates this property and interpolate
-    for (const track of clipTracks) {
-      const hasProperty = track.keyframes.some(kf =>
-        property in kf.properties
-      );
-
-      if (hasProperty) {
-        result[property] = getInterpolatedProperty(
-          track,
-          scaledTime,
-          property,
-          defaults[property]
-        );
-        break;
+    const sampleTime = Math.min(time, clip.startTime + clip.duration);
+    const before = { ...result };
+    const next = getInterpolatedProperties(clipTracks, sampleTime, before);
+    const transition = clip.transition;
+    if (transition && time < clip.startTime + Math.min(transition.duration, clip.duration)) {
+      const length = Math.max(1, Math.min(transition.duration, clip.duration));
+      const progress = Math.max(0, Math.min(1, (time - clip.startTime) / length));
+      const eased = applyEasing(progress, transition.easing);
+      for (const key of Object.keys(next) as (keyof AnimatableProperties)[]) {
+        result[key] = lerp(before[key], next[key], eased);
       }
-    }
+      if (transition.type === 'fade') result.imageOpacity *= Math.abs(2 * progress - 1);
+      if (transition.type === 'slide') result.translateX += (1 - eased) * 20;
+      if (transition.type === 'zoom') result.scale *= 0.8 + 0.2 * eased;
+    } else Object.assign(result, next);
   }
-
+  result.scale = Math.max(0.01, result.scale);
+  result.cameraZoom = Math.max(0.01, result.cameraZoom);
+  result.perspective = Math.max(100, result.perspective);
+  result.imageOpacity = Math.max(0, Math.min(1, result.imageOpacity));
   return result;
 }
 
@@ -308,7 +264,7 @@ export function getKeyframeValueAtTime<K extends keyof AnimatableProperties>(
   propertyKey: K,
   defaultValue: AnimatableProperties[K]
 ): AnimatableProperties[K] {
-  const { prev, next } = findSurroundingKeyframes(track.keyframes, time);
+  const { prev, next } = findSurroundingKeyframes(track.keyframes.filter(kf => kf.properties[propertyKey] !== undefined), time);
 
   if (!prev && !next) return defaultValue;
   if (!prev) return next!.properties[propertyKey] ?? defaultValue;

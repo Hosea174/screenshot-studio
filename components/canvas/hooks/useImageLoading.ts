@@ -157,7 +157,7 @@ export function useOverlayImages(imageOverlays: ImageOverlay[]) {
           const imageUrl =
             isR2Overlay && !overlay.isCustom
               ? getR2ImageUrl({ src: overlay.src })
-              : overlay.src;
+              : overlay.mediaType === 'video' ? overlay.poster ?? '' : overlay.src;
 
           const isR2Asset = imageUrl.startsWith('/r2-assets/');
 

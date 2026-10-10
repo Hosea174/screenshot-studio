@@ -1,5 +1,6 @@
 'use client';
 
+import { ShadowAdjustments } from '@/components/controls/ShadowAdjustments';
 import * as React from 'react';
 import { useImageStore, type ShadowPreset } from '@/lib/store';
 import { SectionWrapper } from './SectionWrapper';
@@ -33,7 +34,7 @@ function ShadowPreview({ shadow }: { shadow: string }) {
 }
 
 export function ShadowSection() {
-  const { shadowPreset, setShadowPreset } = useImageStore();
+  const { shadowPreset, setShadowPreset, imageShadow, setImageShadow } = useImageStore();
 
   return (
     <SectionWrapper title="Shadow" defaultOpen={true}>
@@ -69,6 +70,7 @@ export function ShadowSection() {
           );
         })}
       </div>
+      <ShadowAdjustments shadow={imageShadow} onChange={setImageShadow} />
     </SectionWrapper>
   );
 }

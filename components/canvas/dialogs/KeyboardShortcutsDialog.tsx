@@ -15,6 +15,15 @@ interface ShortcutGroup {
 }
 
 const shortcutGroups: ShortcutGroup[] = [
+  { title: 'Animation timeline', shortcuts: [
+    { keys: ['Space'], description: 'Play / pause' },
+    { keys: ['K'], description: 'Capture keyframe at playhead' },
+    { keys: ['← / →'], description: 'Step one frame (60 fps)' },
+    { keys: ['Shift', '← / →'], description: 'Step ten frames' },
+    { keys: ['Home / End'], description: 'Jump to timeline bounds' },
+    { keys: ['Alt', 'Drag'], description: 'Drag without snapping' },
+    { keys: ['Delete / Backspace'], description: 'Remove selected keyframe or clip' },
+  ] },
   {
     title: "Canvas (when not editing text)",
     shortcuts: [

@@ -1,7 +1,7 @@
 import { useImageStore } from "@/lib/store";
 import { exportSlideFrame, exportSlideFrameAsCanvas } from "./export-slideFrame";
-import { getClipInterpolatedProperties } from "@/lib/animation/interpolation";
-import { DEFAULT_ANIMATABLE_PROPERTIES } from "@/types/animation";
+import { applyAnimationFrame } from "@/lib/animation/playback";
+import { seekTimelineVideos } from "@/lib/video-layers";
 
 function wait(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -274,10 +274,10 @@ export async function renderAnimationToFrames(
   onProgress?: (progress: number) => void
 ) {
   const store = useImageStore.getState();
-  const { timeline, animationClips, slides, slideshow, setActiveSlide, setPerspective3D, setImageOpacity } = store;
+  const { timeline, slides, slideshow, setActiveSlide } = store;
   const { duration, tracks } = timeline;
 
-  if (tracks.length === 0 && slides.length <= 1) {
+  if (tracks.length === 0 && slides.length <= 1 && !store.imageOverlays.some(o => o.mediaType === 'video')) {
     throw new Error("No animation tracks to render");
   }
 
@@ -316,33 +316,15 @@ export async function renderAnimationToFrames(
       }
 
       // Calculate interpolated properties at this time using clip-aware interpolation
-      const interpolated = getClipInterpolatedProperties(
-        animationClips,
-        tracks,
-        time,
-        DEFAULT_ANIMATABLE_PROPERTIES
-      );
-
-      // Apply interpolated properties to store
-      setPerspective3D({
-        perspective: interpolated.perspective,
-        rotateX: interpolated.rotateX,
-        rotateY: interpolated.rotateY,
-        rotateZ: interpolated.rotateZ,
-        translateX: interpolated.translateX,
-        translateY: interpolated.translateY,
-        scale: interpolated.scale,
-      });
-
-      if (interpolated.imageOpacity !== undefined) {
-        setImageOpacity(interpolated.imageOpacity);
-      }
+      store.setPlayhead(time);
+      applyAnimationFrame(time);
 
       // Force DOM reflow so transforms apply instantly (transitions are disabled)
       forceReflow();
 
       // Double-RAF: ensures React has committed DOM changes and browser has painted
       await waitForDOMCommit();
+      await seekTimelineVideos(time);
 
       // Capture the frame
       const img = await exportSlideFrame();
@@ -380,10 +362,10 @@ export async function streamAnimationToEncoder(
   signal?: AbortSignal
 ): Promise<{ width: number; height: number; totalFrames: number }> {
   const store = useImageStore.getState();
-  const { timeline, animationClips, slides, slideshow, setActiveSlide, setPerspective3D, setImageOpacity } = store;
+  const { timeline, slides, slideshow, setActiveSlide } = store;
   const { duration, tracks } = timeline;
 
-  if (tracks.length === 0 && slides.length <= 1) {
+  if (tracks.length === 0 && slides.length <= 1 && !store.imageOverlays.some(o => o.mediaType === 'video')) {
     throw new Error("No animation tracks to render");
   }
 
@@ -421,33 +403,15 @@ export async function streamAnimationToEncoder(
       }
 
       // Calculate interpolated properties at this time using clip-aware interpolation
-      const interpolated = getClipInterpolatedProperties(
-        animationClips,
-        tracks,
-        time,
-        DEFAULT_ANIMATABLE_PROPERTIES
-      );
-
-      // Apply interpolated properties to store
-      setPerspective3D({
-        perspective: interpolated.perspective,
-        rotateX: interpolated.rotateX,
-        rotateY: interpolated.rotateY,
-        rotateZ: interpolated.rotateZ,
-        translateX: interpolated.translateX,
-        translateY: interpolated.translateY,
-        scale: interpolated.scale,
-      });
-
-      if (interpolated.imageOpacity !== undefined) {
-        setImageOpacity(interpolated.imageOpacity);
-      }
+      store.setPlayhead(time);
+      applyAnimationFrame(time);
 
       // Force DOM reflow so transforms apply instantly (transitions are disabled)
       forceReflow();
 
       // Double-RAF: ensures React has committed DOM changes and browser has painted
       await waitForDOMCommit();
+      await seekTimelineVideos(time);
 
       // Capture and immediately stream to encoder
       const canvas = await exportSlideFrameAsCanvas();

@@ -1,4 +1,5 @@
 "use client";
+import { ShadowAdjustments, DEFAULT_MEDIA_SHADOW } from "@/components/controls/ShadowAdjustments";
 
 import { useRef } from "react";
 import {
@@ -263,6 +264,7 @@ export function MockupControls(): React.JSX.Element {
             valueDisplay={`${Math.round(selected.opacity * 100)}%`}
           />
 
+          <ShadowAdjustments shadow={selected.shadow ?? DEFAULT_MEDIA_SHADOW} onChange={changes => updateMockup(selected.id, { shadow: { ...(selected.shadow ?? DEFAULT_MEDIA_SHADOW), ...changes } })} />
           <div className="grid grid-cols-4 gap-1">
             <button type="button" onClick={() => reorderMockup(selected.id, "down")} className="flex h-8 items-center justify-center rounded-md text-muted-foreground max-[768px]:h-11 hover:bg-foreground/[0.05] hover:text-foreground" aria-label="Move layer down"><ArrowDown01Icon size={14} /></button>
             <button type="button" onClick={() => reorderMockup(selected.id, "up")} className="flex h-8 items-center justify-center rounded-md text-muted-foreground max-[768px]:h-11 hover:bg-foreground/[0.05] hover:text-foreground" aria-label="Move layer up"><ArrowUp01Icon size={14} /></button>

@@ -12,7 +12,6 @@ import {
   Delete02Icon,
 } from 'hugeicons-react';
 import { useImageStore } from '@/lib/store';
-import { Slider } from '@/components/ui/slider';
 import { cn } from '@/lib/utils';
 
 function formatTimeDisplay(ms: number): string {
@@ -117,16 +116,10 @@ export function TimelineControls({ onAddAnimation, onClose }: TimelineControlsPr
           <span className="whitespace-nowrap text-[10px] font-medium text-muted-foreground">
             Duration {durationLabel}s
           </span>
-          <Slider
-            min={1}
-            max={30}
-            step={1}
-            value={[durationSeconds]}
-            onValueChange={(v) => setTimelineDuration((v[0] ?? 1) * 1000)}
-            className="w-20 space-y-0"
-            aria-label="Timeline duration"
-            aria-valuetext={`${durationLabel} seconds`}
-          />
+          <input type="number" min={0.5} step={0.1} value={Number(durationSeconds.toFixed(2))}
+            onChange={e => { if (e.target.value && Number.isFinite(+e.target.value)) setTimelineDuration(+e.target.value * 1000); }}
+            className="h-7 w-20 rounded-md border border-border bg-background px-2 text-xs tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="Timeline duration seconds" />
           <Time02Icon size={14} className="shrink-0 text-muted-foreground" />
         </div>
 
