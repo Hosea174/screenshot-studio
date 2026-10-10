@@ -33,7 +33,7 @@ Deleting a diamond removes only its selected property. Locked tracks reject keyf
 
 ## Video and appearance
 
-Upload a browser-decodable MP4 or WebM to add a video layer. Select it and use its Depth controls for **Start on timeline**, **Trim in**, **Speed**, and **Loop video**. Trim-in skips the beginning of the source; there is no separate trim-out field. Playback is muted, and export does not mix source audio. Loop repeats the remaining source interval after trim-in; without loop, its source time clamps at the end.
+Drop a browser-decodable MP4, WebM, or MOV onto the canvas, use the empty canvas file picker, or upload through Media layers to add a video layer. Select it and use its Depth controls for **Start on timeline**, **Trim in**, **Speed**, and **Loop video**. Trim-in skips the beginning of the source; there is no separate trim-out field. Playback is muted, and export does not mix source audio. Loop repeats the remaining source interval after trim-in; without loop, its source time clamps at the end.
 
 Video preview draws decoded frames onto a source canvas. Frame rendering awaits video seeking before capturing those canvas pixels, so exported frames use the source image at the requested timeline time. Codec support depends on the browser and export encoder. Media blob URLs last only for the current session; saving a motion preset does not save a video file.
 

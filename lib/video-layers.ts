@@ -1,6 +1,16 @@
 import type { ImageOverlay } from '@/lib/store';
 import { useImageStore } from '@/lib/store';
 
+export const VIDEO_FILE_ACCEPT = {
+  'video/mp4': ['.mp4', '.m4v'],
+  'video/webm': ['.webm'],
+  'video/quicktime': ['.mov'],
+};
+
+export function isVideoFile(file: Pick<File, 'type' | 'name'>) {
+  return file.type.startsWith('video/') || /\.(mp4|m4v|webm|mov)$/i.test(file.name);
+}
+
 export async function addVideoLayer(file: File) {
   const video = await readVideoFile(file);
   const state = useImageStore.getState();

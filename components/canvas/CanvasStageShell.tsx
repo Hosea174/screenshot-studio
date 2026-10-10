@@ -12,6 +12,8 @@ type CanvasStageShellProps = {
   className?: string;
   id?: string;
   style?: React.CSSProperties;
+  onDragOver?: React.DragEventHandler<HTMLDivElement>;
+  onDrop?: React.DragEventHandler<HTMLDivElement>;
 };
 
 export function CanvasStageShell({
@@ -21,6 +23,8 @@ export function CanvasStageShell({
   className,
   id,
   style,
+  onDragOver,
+  onDrop,
 }: CanvasStageShellProps): React.JSX.Element {
   const backgroundBorderRadius = useImageStore((s) => s.backgroundBorderRadius);
   const backgroundConfig = useImageStore((s) => s.backgroundConfig);
@@ -33,6 +37,8 @@ export function CanvasStageShell({
   return (
     <div
       id={id}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
       className={cn(
         "relative shrink-0 transition-[border-radius] duration-300",
         "shadow-xl ring-1 ring-foreground/10",

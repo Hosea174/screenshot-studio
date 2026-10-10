@@ -17,6 +17,8 @@ import { Input } from '@/components/ui/input';
 import { SegmentedControl } from '@/components/ui/segmented-control';
 import { getBackgroundCSS } from '@/lib/constants/backgrounds';
 import { useBackgroundImageReady } from '@/hooks/useBackgroundImageReady';
+import { addVideoLayer, isVideoFile, VIDEO_FILE_ACCEPT } from '@/lib/video-layers';
+import { toast } from 'sonner';
 
 const TRANSITION_DURATION = 400; // ms
 type ColorScheme = 'light' | 'dark';
@@ -44,6 +46,7 @@ export function CleanUploadState() {
   const [screenshotUrl, setScreenshotUrl] = React.useState('');
   const [colorScheme, setColorScheme] = React.useState<ColorScheme>('light');
   const [isCapturing, setIsCapturing] = React.useState(false);
+  const [isImportingVideo, setIsImportingVideo] = React.useState(false);
 
   const { setScreenshot } = useEditorStore();
   const { addImages, setImage, backgroundConfig, addTextOverlay } = useImageStore();
@@ -142,10 +145,27 @@ export function CleanUploadState() {
   );
 
   const onDrop = React.useCallback(
-    (acceptedFiles: File[]) => {
+    async (acceptedFiles: File[]) => {
+      setIsDragActive(false);
       if (!acceptedFiles.length) return;
-      addImages(acceptedFiles);
-      handleFile(acceptedFiles[0]);
+      setError(null);
+      const images = acceptedFiles.filter(file => !isVideoFile(file));
+      if (images.length) {
+        addImages(images);
+        handleFile(images[0]);
+      }
+      const videos = acceptedFiles.filter(isVideoFile);
+      if (videos.length) setIsImportingVideo(true);
+      try {
+        for (const file of videos) {
+          try { await addVideoLayer(file); }
+          catch (error) {
+            const message = error instanceof Error ? error.message : 'Could not add video';
+            setError(message);
+            toast.error(message);
+          }
+        }
+      } finally { setIsImportingVideo(false); }
     },
     [addImages, handleFile]
   );
@@ -161,8 +181,11 @@ export function CleanUploadState() {
       'image/jpeg': ['.jpg', '.jpeg'],
       'image/png': ['.png'],
       'image/webp': ['.webp'],
+      ...VIDEO_FILE_ACCEPT,
     },
-    maxSize: MAX_IMAGE_SIZE,
+    validator: file => !isVideoFile(file) && file.size > MAX_IMAGE_SIZE
+      ? { code: 'file-too-large', message: 'Image exceeds the size limit' } : null,
+    disabled: isImportingVideo,
     multiple: true,
     noClick: true,
     onDragEnter: () => { setIsDragActive(true); setError(null); },
@@ -173,7 +196,7 @@ export function CleanUploadState() {
         if (rejection.errors.some((e) => e.code === 'file-too-large')) {
           setError(`File size too large. Maximum size is ${MAX_IMAGE_SIZE / 1024 / 1024}MB`);
         } else if (rejection.errors.some((e) => e.code === 'file-invalid-type')) {
-          setError('File type not supported. Please use: PNG, JPG, WEBP');
+          setError('File type not supported. Use PNG, JPG, WEBP, MP4, WebM, or MOV.');
         } else {
           setError('Failed to upload file. Please try again.');
         }
@@ -299,7 +322,7 @@ export function CleanUploadState() {
               '0 1px 4px color-mix(in srgb, var(--shadow-color) 45%, transparent)',
           }}
         >
-          {active ? 'Drop the image here...' : 'Drag & drop, click to browse, or paste'}
+          {isImportingVideo ? 'Loading video...' : active ? 'Drop the image or video here...' : 'Drag & drop images or videos, click to browse, or paste'}
         </p>
 
         {!active && (

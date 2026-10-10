@@ -1,4 +1,4 @@
-/* global process, console, document, WebMMuxer, VideoEncoder, VideoFrame, Buffer, URL, Blob */
+/* global process, console, document, WebMMuxer, VideoEncoder, VideoFrame, Buffer, URL, Blob, DataTransfer, File, DragEvent */
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -24,7 +24,29 @@ import fs from 'node:fs';
     }
     await encoder.flush();encoder.close();muxer.finalize();return [...new Uint8Array(target.buffer)];
   });
-  await page.locator('input[type=file][accept*="video"]').first().setInputFiles({ name: 'colors.webm', mimeType: 'video/webm', buffer: Buffer.from(bytes) });
+  // Exercise the empty canvas and populated canvas drop paths, separately from
+  // the Media layers picker. This catches image-only validation regressions.
+  const dropPage = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+  dropPage.on('pageerror', e => errors.push(e.message));
+  await dropPage.goto(process.env.STUDIO_URL || 'http://localhost:3000/editor', { waitUntil: 'domcontentloaded', timeout: 120000 });
+  await dropPage.getByRole('button', { name: 'Motion', exact: true }).waitFor({ timeout: 120000 });
+  await dropPage.waitForTimeout(3000);
+  const dropVideo = async () => dropPage.locator('#image-render-card').evaluate((element, bytes) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([new Uint8Array(bytes)], 'dropped.webm', { type: 'video/webm' }));
+    const target = element.querySelector('[role="presentation"]') || element;
+    for (const type of ['dragenter', 'dragover', 'drop']) {
+      target.dispatchEvent(new DragEvent(type, { dataTransfer: transfer, bubbles: true, cancelable: true }));
+    }
+  }, bytes);
+  await dropVideo();
+  await dropPage.locator('canvas[data-video-canvas]').waitFor({ timeout: 30000 });
+  await dropVideo();
+  await dropPage.waitForFunction(() => document.querySelectorAll('canvas[data-video-canvas]').length === 2);
+  assert.equal(await dropPage.getByText(/File type not supported/).count(), 0);
+  await dropPage.close();
+
+  await page.locator('#image-render-card input[type=file]').setInputFiles({ name: 'colors.webm', mimeType: 'video/webm', buffer: Buffer.from(bytes) });
   const canvas = page.locator('canvas[data-video-canvas]'); await canvas.waitFor({ timeout: 30000 });
   await page.waitForTimeout(500);
   const pixel = () => canvas.evaluate(e => [...e.getContext('2d').getImageData(160,90,1,1).data]);
@@ -34,6 +56,12 @@ import fs from 'node:fs';
   for (let i=0; i<6; i++) await page.keyboard.press('Shift+ArrowRight');
   await page.waitForTimeout(500);
   const blue = await pixel(); assert.ok(blue[2] > 180 && blue[0] < 60, `scrubbed video frame: ${blue}`);
+  if (process.env.STUDIO_UPLOAD_ONLY === '1') {
+    assert.deepEqual(errors, []);
+    console.log('Empty and populated canvas video drops, canvas picker, and scrubbing passed');
+    await browser.close();
+    return;
+  }
   // Video-only export must work with zero animation tracks.
   await page.getByLabel('Timeline duration seconds').fill('1.2');
   await page.getByRole('button', { name: 'Export Video', exact: true }).click();

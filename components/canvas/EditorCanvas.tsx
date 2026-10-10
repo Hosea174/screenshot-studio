@@ -20,6 +20,8 @@ import { StoreScreenshotsShortcut } from "@/components/store-screenshots/StoreSc
 import { STORE_SHORTCUT_GAP } from "@/lib/store-screenshots/config";
 import { TEMPLATE_DEMO_IMAGE_NAME } from "@/lib/templates/demo-media";
 import { useBackgroundImageReady } from "@/hooks/useBackgroundImageReady";
+import { addVideoLayer, isVideoFile } from '@/lib/video-layers';
+import { toast } from 'sonner';
 
 export function EditorCanvas() {
   const isMobile = useIsMobile();
@@ -155,6 +157,18 @@ export function EditorCanvas() {
             breathe={!stageReady}
             showBackground={!stageReady}
             className="shrink-0 overflow-hidden"
+            onDragOver={hasRenderableContent ? event => {
+              if (Array.from(event.dataTransfer.items).some(item => item.kind === 'file')) {
+                event.preventDefault(); event.dataTransfer.dropEffect = 'copy';
+              }
+            } : undefined}
+            onDrop={hasRenderableContent ? async event => {
+              event.preventDefault(); event.stopPropagation();
+              for (const file of Array.from(event.dataTransfer.files).filter(isVideoFile)) {
+                try { await addVideoLayer(file); }
+                catch (error) { toast.error(error instanceof Error ? error.message : 'Could not add video'); }
+              }
+            } : undefined}
           >
             {!hasRenderableContent ? (
               <CleanUploadState />
