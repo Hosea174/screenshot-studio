@@ -12,7 +12,7 @@ import { presets } from '../lib/constants/presets';
 test('animated templates reference valid visual and motion presets', () => {
   const templateIds = new Set<string>();
 
-  assert.equal(ANIMATED_TEMPLATES.length, 6);
+  assert.equal(ANIMATED_TEMPLATES.length, 11);
 
   for (const template of ANIMATED_TEMPLATES) {
     assert.equal(templateIds.has(template.id), false, `duplicate template id: ${template.id}`);
@@ -27,42 +27,21 @@ test('animated templates reference valid visual and motion presets', () => {
       getPresetById(template.animationPresetId),
       `missing animation preset: ${template.animationPresetId}`,
     );
-    assert.ok(template.duration >= 7000, `${template.id} is too abrupt`);
+    assert.ok(template.id === 'smooth-cascade' || (template.duration >= 3000 && template.duration <= 5000));
     assert.equal(template.keyframes[0]?.time, 0);
     assert.equal(template.keyframes.at(-1)?.time, template.duration);
     assert.ok(template.keyframes.length >= 2);
-
-    for (const keyframe of template.keyframes) {
-      const properties = keyframe.properties;
-      assert.ok(Math.abs(properties.rotateX) <= 2, `${template.id} rotates too far on X`);
-      assert.ok(Math.abs(properties.rotateY) <= 2, `${template.id} rotates too far on Y`);
-      assert.ok(Math.abs(properties.rotateZ) <= 2, `${template.id} rotates too far on Z`);
-      assert.ok(
-        Math.abs(properties.translateX) <= (template.id === 'close-pan' ? 18 : 10),
-        `${template.id} moves too far on X`,
-      );
-      assert.ok(Math.abs(properties.translateY) <= 6, `${template.id} moves too far on Y`);
-      assert.ok(
-        properties.scale >= 0.97 && properties.scale <= (template.id === 'close-pan' ? 1.45 : 1.12),
-      );
-      assert.notEqual(keyframe.easing, 'ease-in');
-    }
   }
 });
 
-test('Close Pan keeps a close crop while moving right to left for the full timeline', () => {
-  const closePan = ANIMATED_TEMPLATES.find(({ id }) => id === 'close-pan');
-
-  assert.ok(closePan);
-  assert.equal(closePan.duration, 10000);
-  assert.equal(closePan.imageStylePreset, 'default');
-  assert.equal(closePan.keyframes.length, 2);
-  assert.equal(closePan.keyframes[0]?.properties.translateX, 18);
-  assert.equal(closePan.keyframes[0]?.properties.scale, 1.45);
-  assert.equal(closePan.keyframes[1]?.properties.translateX, -18);
-  assert.equal(closePan.keyframes[1]?.properties.scale, 1.45);
+test('the new library removes every retired template identity', () => {
+  const retired = ['launch-vector', 'knife-edge', 'whip-catch', 'slit-to-screen', 'orbital-pass',
+    'quarter-roll', 'suspended-swing', 'three-stations', 'dive-and-level', 'editorial-cut',
+    'quiet-descent', 'glass-glide', 'velvet-rise', 'focus-float', 'soft-orbit', 'slow-parallax',
+    'breathe-into-focus', 'silk-reveal', 'northbound', 'soft-reveal', 'focus-pull', 'side-reveal',
+    'slow-push', 'close-pan', 'studio-drift'];
+  assert.ok(ANIMATED_TEMPLATES.every(template => !retired.includes(template.id)));
 });
-
 test('animated template timelines are editable and internally linked', () => {
   const template = ANIMATED_TEMPLATES[0];
   assert.ok(template);

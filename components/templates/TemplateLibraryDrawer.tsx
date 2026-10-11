@@ -55,7 +55,7 @@ function TemplateMetadata({ selection }: { selection: TemplateSelection }) {
     : getImageTemplateById(selection.template.visualPresetId)?.preset
       ?? getVisualPresetById(selection.template.visualPresetId);
   const dimensions = getAspectRatioPreset(
-    preset?.aspectRatio ?? '16_9',
+    selection.kind === 'animated' && ['cinematic', 'smooth'].includes(selection.template.category) ? '9_16' : preset?.aspectRatio ?? '16_9',
   );
 
   return (
@@ -66,7 +66,7 @@ function TemplateMetadata({ selection }: { selection: TemplateSelection }) {
       </span>
       <span className="inline-flex items-center gap-1.5">
         <PaintBrush01Icon size={14} />
-        {preset?.name ?? 'Editable design'}
+        {selection.kind === 'animated' && ['cinematic', 'smooth'].includes(selection.template.category) ? 'Your current style' : preset?.name ?? 'Editable design'}
       </span>
       {dimensions ? (
         <span className="inline-flex items-center gap-1.5 tabular-nums">
@@ -173,7 +173,9 @@ function TemplateDetail({
           Use Template
         </button>
         <p className="mx-auto mt-3 max-w-sm text-center text-[11px] leading-4 text-muted-foreground">
-          This replaces the current design and animation. Your uploaded media stays.
+          {selection.kind === 'animated' && ['cinematic', 'smooth'].includes(selection.template.category)
+            ? 'Applies portrait framing and replaces the animation. Keeps your media and visual style.'
+            : 'This replaces the current design and animation. Your uploaded media stays.'}
         </p>
       </div>
     </motion.div>

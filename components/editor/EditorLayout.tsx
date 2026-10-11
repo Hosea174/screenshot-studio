@@ -14,7 +14,8 @@ import { Button } from "@/components/ui/button";
 import { Settings02Icon, Upload01Icon, VideoReplayIcon } from "hugeicons-react";
 import { useAutosaveDraft } from "@/hooks/useAutosaveDraft";
 import { MobileBanner } from "./MobileBanner";
-import { TimelineEditor } from "@/components/timeline";
+import { TimelineEditor, useTimelinePlayback } from "@/components/timeline";
+import { MinimizedMotionBar } from "@/components/timeline/MinimizedMotionBar";
 import { useImageStore } from "@/lib/store";
 import { trackEditorOpen } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
@@ -22,7 +23,7 @@ import {
   hasVisibleMockups,
   shouldRenderSourceImage,
 } from "@/lib/device-mockups/layouts";
-import { StoreScreenshotsShortcut } from "@/components/store-screenshots/StoreScreenshotsFeatureCard";
+import { shouldIgnoreEditorShortcut } from "@/lib/editor-shortcuts";
 import { TemplateLibraryDrawer } from "@/components/templates/TemplateLibraryDrawer";
 import { ALLOWED_IMAGE_TYPES, MAX_IMAGE_SIZE } from "@/lib/constants";
 import { useDeviceUIStore } from "@/lib/store/device-ui";
@@ -116,7 +117,6 @@ function EditorMain() {
   const [mobileSheetOpen, setMobileSheetOpen] = React.useState(false);
   const {
     uploadedImageUrl,
-    imageName,
     slides,
     mockups,
     editorMode,
@@ -124,7 +124,12 @@ function EditorMain() {
     toggleTimeline,
     imageOverlays,
     textOverlays,
+    activeRightPanelTab,
+    animationClips,
   } = useImageStore();
+
+  // Persistent timeline playback loop across timeline toggle states
+  useTimelinePlayback();
 
   // enable autosave
   useAutosaveDraft();
@@ -135,9 +140,16 @@ function EditorMain() {
   const hasContent = hasSourceContent || (
     editorMode === "device" && hasVisibleMockups(mockups)
   ) || imageOverlays.length > 0 || textOverlays.length > 0;
-  const isUsingTemplateDemo = editorMode === "device"
-    ? hasTemplateDemoMedia(mockups.map((mockup) => mockup.screen))
-    : isTemplateDemoMedia(uploadedImageUrl, imageName);
+  React.useEffect(() => {
+    if (isMobile) return;
+    const handleTimelineShortcut = (event: KeyboardEvent) => {
+      if (shouldIgnoreEditorShortcut(event) || !event.ctrlKey || event.metaKey || event.altKey || event.code !== "Backquote") return;
+      event.preventDefault();
+      toggleTimeline();
+    };
+    window.addEventListener("keydown", handleTimelineShortcut);
+    return () => window.removeEventListener("keydown", handleTimelineShortcut);
+  }, [isMobile, toggleTimeline]);
 
   React.useEffect(() => {
     trackEditorOpen();
@@ -156,10 +168,7 @@ function EditorMain() {
       <EditorHeader />
       <TemplateLibraryDrawer />
 
-      <div className="bg-background border-b border-foreground/10 flex items-center justify-between gap-2 px-3 py-2 z-10 shrink-0 lg:hidden">
-          {!isUsingTemplateDemo ? (
-            <StoreScreenshotsShortcut compact className="min-w-0" />
-          ) : null}
+      <div className="bg-background border-b border-foreground/10 flex items-center justify-end gap-2 px-3 py-2 z-10 shrink-0 lg:hidden">
           <Button
             variant="ghost"
             size="sm"
@@ -192,23 +201,28 @@ function EditorMain() {
               <TemplateMediaPrompt />
 
               {hasContent && !showTimeline && !isMobile && (
-                <button
-                  type="button"
-                  onClick={toggleTimeline}
-                  className={cn(
-                    'absolute bottom-3 left-1/2 z-20 -translate-x-1/2',
-                    'inline-flex h-9 cursor-pointer items-center gap-2 rounded-md px-4',
-                    'bg-card text-sm font-medium text-foreground',
-                    'border border-foreground/10',
-                    'shadow-lg',
-                    'transition-all duration-150 ease-out',
-                    'hover:bg-muted hover:border-foreground/15',
-                    'active:scale-[0.98]'
-                  )}
-                >
-                  <VideoReplayIcon size={15} className="text-foreground" />
-                  <span>Animate</span>
-                </button>
+                activeRightPanelTab === "animate" || animationClips.length > 0 ? (
+                  <MinimizedMotionBar />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={toggleTimeline}
+                    className={cn(
+                      'absolute bottom-3 left-1/2 z-20 -translate-x-1/2',
+                      'inline-flex h-9 cursor-pointer items-center gap-2 rounded-md px-4',
+                      'bg-card text-sm font-medium text-foreground',
+                      'border border-foreground/10',
+                      'shadow-lg',
+                      'transition-all duration-150 ease-out',
+                      'hover:bg-muted hover:border-foreground/15',
+                      'active:scale-[0.98]'
+                    )}
+                  >
+                    <VideoReplayIcon size={15} className="text-foreground" />
+                    <span>Animate</span>
+                    <kbd className="rounded border border-foreground/10 bg-foreground/[0.04] px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">Ctrl + `</kbd>
+                  </button>
+                )
               )}
             </div>
           </div>

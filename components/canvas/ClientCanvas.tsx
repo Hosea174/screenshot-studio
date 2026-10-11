@@ -11,7 +11,6 @@ import { useMotionSelection } from '@/lib/animation/editor';
 import { shouldIgnoreEditorShortcut } from "@/lib/editor-shortcuts";
 import { calculateCanvasDimensions } from "./utils/canvas-dimensions";
 import { CanvasStageShell } from "./CanvasStageShell";
-import { Perspective3DOverlay } from "./overlays/Perspective3DOverlay";
 import { useOverlayImages } from "./hooks/useImageLoading";
 import {
   HTMLCanvasRenderer,
@@ -133,74 +132,6 @@ function CanvasRenderer({ image }: { image: HTMLImageElement }) {
   const [isDraggingMainImage, setIsDraggingMainImage] = useState(false);
   const [selectedBlurId, setSelectedBlurId] = useState<string | null>(null);
 
-  // 3D transform drag state — differentiates click (select) from drag (move)
-  const [is3DDragging, setIs3DDragging] = useState(false);
-  const [is3DPointerDown, setIs3DPointerDown] = useState(false);
-  const drag3DStartRef = useRef<{
-    clientX: number; clientY: number;
-    tX: number; tY: number;
-    moved: boolean;
-  } | null>(null);
-
-  const handle3DDragDown = useCallback((e: React.PointerEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const p3d = useImageStore.getState().perspective3D;
-    drag3DStartRef.current = {
-      clientX: e.clientX,
-      clientY: e.clientY,
-      tX: p3d.translateX,
-      tY: p3d.translateY,
-      moved: false,
-    };
-    setIs3DPointerDown(true);
-    // Select the image on click/drag start
-    setIsMainImageSelected(true);
-    setSelectedOverlayId(null);
-    setSelectedTextId(null);
-  }, [setIsMainImageSelected, setSelectedOverlayId]);
-
-  useEffect(() => {
-    if (!is3DPointerDown) return;
-
-    const DRAG_THRESHOLD = 3;
-
-    const handleMove = (e: PointerEvent) => {
-      const s = drag3DStartRef.current;
-      if (!s) return;
-
-      const dx = e.clientX - s.clientX;
-      const dy = e.clientY - s.clientY;
-
-      // Only start actual drag after threshold — clicks pass through
-      if (!s.moved && Math.sqrt(dx * dx + dy * dy) < DRAG_THRESHOLD) return;
-      s.moved = true;
-      setIs3DDragging(true);
-
-      const sensitivity = 0.15;
-      const newTX = Math.max(-30, Math.min(30, s.tX + dx * sensitivity));
-      const newTY = Math.max(-30, Math.min(30, s.tY + dy * sensitivity));
-
-      useImageStore.getState().setPerspective3D({
-        translateX: Math.round(newTX * 10) / 10,
-        translateY: Math.round(newTY * 10) / 10,
-      });
-    };
-
-    const handleUp = () => {
-      setIs3DDragging(false);
-      setIs3DPointerDown(false);
-      drag3DStartRef.current = null;
-    };
-
-    window.addEventListener('pointermove', handleMove);
-    window.addEventListener('pointerup', handleUp);
-
-    return () => {
-      window.removeEventListener('pointermove', handleMove);
-      window.removeEventListener('pointerup', handleUp);
-    };
-  }, [is3DPointerDown]);
 
   const containerWidth = responsiveDimensions.width;
   const containerHeight = responsiveDimensions.height;
@@ -428,6 +359,26 @@ function CanvasRenderer({ image }: { image: HTMLImageElement }) {
     setCanvasDimensions({ canvasW, canvasH, framedW, framedH });
   }, [canvasW, canvasH, framedW, framedH, setCanvasDimensions]);
 
+  // Keep asset position proportionally stable when canvas container resizes
+  // (e.g. timeline minimized/maximized or browser window resized)
+  const prevDimensionsRef = useRef<{ canvasW: number; canvasH: number } | null>(null);
+  useEffect(() => {
+    if (prevDimensionsRef.current) {
+      const prev = prevDimensionsRef.current;
+      if (prev.canvasW > 0 && prev.canvasH > 0 && (prev.canvasW !== canvasW || prev.canvasH !== canvasH)) {
+        const scaleX = canvasW / prev.canvasW;
+        const scaleY = canvasH / prev.canvasH;
+        if (screenshot.offsetX !== 0 || screenshot.offsetY !== 0) {
+          setScreenshot({
+            offsetX: Math.round(screenshot.offsetX * scaleX),
+            offsetY: Math.round(screenshot.offsetY * scaleY),
+          });
+        }
+      }
+    }
+    prevDimensionsRef.current = { canvasW, canvasH };
+  }, [canvasW, canvasH, screenshot.offsetX, screenshot.offsetY, setScreenshot]);
+
   const showFrame = frame.enabled && frame.type !== "none";
 
   let selectedSelector: string | null = null;
@@ -519,46 +470,6 @@ function CanvasRenderer({ image }: { image: HTMLImageElement }) {
           noiseOpacity={noise.opacity}
         />
 
-        {hasSourceImage ? <Perspective3DOverlay
-          has3DTransform={has3DTransform}
-          perspective3D={perspective3D}
-          screenshot={screenshot}
-          shadow={shadow}
-          frame={frame}
-          showFrame={showFrame}
-          framedW={framedW}
-          framedH={framedH}
-          frameOffset={frameOffset}
-          windowPadding={windowPadding}
-          windowHeader={windowHeader}
-          eclipseBorder={eclipseBorder}
-          imageScaledW={imageScaledW}
-          imageScaledH={imageScaledH}
-          groupCenterX={groupCenterX}
-          groupCenterY={groupCenterY}
-          canvasW={canvasW}
-          canvasH={canvasH}
-          image={image}
-          imageOpacity={imageOpacity}
-          imageFilters={imageFilters}
-        /> : null}
-
-        {hasSourceImage && has3DTransform && (
-          <div
-            onPointerDown={handle3DDragDown}
-            style={{
-              position: 'absolute',
-              left: 0,
-              top: 0,
-              width: `${canvasW}px`,
-              height: `${canvasH}px`,
-              zIndex: 16,
-              cursor: is3DDragging ? 'grabbing' : 'grab',
-              touchAction: 'none',
-            }}
-          />
-        )}
-
         {backOverlays.length > 0 && (
           <HTMLImageOverlayLayer
             imageOverlays={backOverlays}
@@ -574,7 +485,7 @@ function CanvasRenderer({ image }: { image: HTMLImageElement }) {
           />
         )}
 
-        {hasSourceImage && !has3DTransform && (
+        {hasSourceImage && (
           <>
             <SnapAlignmentGuides
               canvasW={canvasW}
@@ -600,6 +511,7 @@ function CanvasRenderer({ image }: { image: HTMLImageElement }) {
               showFrame={showFrame}
               imageOpacity={imageOpacity}
               imageFilters={imageFilters}
+              perspective3D={perspective3D}
               isMainImageSelected={isMainImageSelected}
               setIsMainImageSelected={setIsMainImageSelected}
               setSelectedOverlayId={setSelectedOverlayId}
@@ -671,6 +583,7 @@ function CanvasRenderer({ image }: { image: HTMLImageElement }) {
 
         {showGrid && <HTMLGridLayer canvasW={canvasW} canvasH={canvasH} />}
       </HTMLCanvasRenderer>
+
     </div>
   );
 }

@@ -1,5 +1,5 @@
 // Easing function types
-export type EasingFunction =
+export type EasingPreset =
   | 'linear'
   | 'ease-in'
   | 'ease-out'
@@ -14,6 +14,7 @@ export type EasingFunction =
   | 'ease-out-back'
   | 'ease-out-elastic'
   | 'hold';
+export type EasingFunction = EasingPreset | `cubic-bezier(${number},${number},${number},${number})`;
 
 // Properties that can be animated over time
 export interface AnimatableProperties {
@@ -56,6 +57,8 @@ export interface Keyframe {
   id: string;
   time: number; // milliseconds from start
   properties: Partial<AnimatableProperties>;
+  /** A discrete CSS clip-path value, sampled from the latest keyframe. */
+  clipMask?: string;
   easing: EasingFunction;
 }
 

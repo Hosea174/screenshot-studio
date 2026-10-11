@@ -1,12 +1,14 @@
 'use client';
 
+import * as React from 'react';
 import { useRef, useState, useCallback, useMemo, useEffect } from 'react';
 import { type ShadowConfig } from '../utils/shadow-utils';
 import { ShadowDefinition } from './ShadowDefinition';
 import { buildDropShadowFilter as buildSharedDropShadowFilter, parseShadowRgb } from '@/lib/drop-shadow';
 import { type ImageFilters, useImageStore } from '@/lib/store';
 import { SafariToolbar, ChromeToolbar } from '../frames/BrowserToolbar';
-import { CanvasObjectTopControls } from './CanvasObjectTopControls';
+
+const ROTATE_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none'%3E%3Cpath d='M20.5 4v5h-5' stroke='%23000' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M20.5 4v5h-5' stroke='%23fff' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M19.8 14.5a8 8 0 1 1-.5-6.5l1.2-1.2' stroke='%23000' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M19.8 14.5a8 8 0 1 1-.5-6.5l1.2-1.2' stroke='%23fff' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 12 12, crosshair`;
 
 export interface FrameConfig {
   enabled: boolean;
@@ -16,6 +18,16 @@ export interface FrameConfig {
   padding?: number;
   title?: string;
   opacity?: number;
+}
+
+export interface Perspective3DConfig {
+  perspective: number;
+  rotateX: number;
+  rotateY: number;
+  rotateZ: number;
+  translateX: number;
+  translateY: number;
+  scale: number;
 }
 
 interface HTMLMainImageLayerProps {
@@ -41,6 +53,7 @@ interface HTMLMainImageLayerProps {
   showFrame: boolean;
   imageOpacity: number;
   imageFilters?: ImageFilters;
+  perspective3D?: Perspective3DConfig;
   isMainImageSelected: boolean;
   setIsMainImageSelected: (selected: boolean) => void;
   setSelectedOverlayId: (id: string | null) => void;
@@ -143,6 +156,7 @@ export function HTMLMainImageLayer({
   showFrame,
   imageOpacity,
   imageFilters,
+  perspective3D,
   isMainImageSelected,
   setIsMainImageSelected,
   setSelectedOverlayId,
@@ -151,6 +165,7 @@ export function HTMLMainImageLayer({
   onDragStateChange,
   onRemoveImage,
 }: HTMLMainImageLayerProps) {
+  const imageClipPath = useImageStore((state) => state.imageClipPath);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
@@ -218,6 +233,13 @@ export function HTMLMainImageLayer({
     const handleMouseUp = () => {
       setIsDragging(false);
       onDragStateChange?.(false);
+      const state = useImageStore.getState();
+      if (!state.timeline.isPlaying && (state.activeRightPanelTab === 'animate' || state.animationClips.length > 0)) {
+        state.recordPropertyChanges({
+          translateX: Math.round(((screenshot.offsetX || 0) / (canvasW || 1)) * 100 * 10) / 10,
+          translateY: Math.round(((screenshot.offsetY || 0) / (canvasH || 1)) * 100 * 10) / 10,
+        });
+      }
     };
 
     window.addEventListener('pointermove', handleMouseMove);
@@ -227,7 +249,7 @@ export function HTMLMainImageLayer({
       window.removeEventListener('pointermove', handleMouseMove);
       window.removeEventListener('pointerup', handleMouseUp);
     };
-  }, [isDragging, dragStart, setScreenshot, onDragStateChange]);
+  }, [isDragging, dragStart, setScreenshot, onDragStateChange, canvasW, canvasH, screenshot.offsetX, screenshot.offsetY]);
 
   // Handle resize move
   useEffect(() => {
@@ -260,6 +282,10 @@ export function HTMLMainImageLayer({
     const handleMouseUp = () => {
       setIsResizing(false);
       resizeStartRef.current = null;
+      const state = useImageStore.getState();
+      if (!state.timeline.isPlaying && (state.activeRightPanelTab === 'animate' || state.animationClips.length > 0)) {
+        state.recordPropertyChange('scale', state.imageScale / 100);
+      }
     };
 
     window.addEventListener('pointermove', handleMouseMove);
@@ -309,6 +335,10 @@ export function HTMLMainImageLayer({
     const handleMouseUp = () => {
       setIsRotating(false);
       rotateStartRef.current = null;
+      const state = useImageStore.getState();
+      if (!state.timeline.isPlaying && (state.activeRightPanelTab === 'animate' || state.animationClips.length > 0)) {
+        state.recordPropertyChange('rotateZ', screenshot.rotation);
+      }
     };
 
     window.addEventListener('pointermove', handleMouseMove);
@@ -337,7 +367,27 @@ export function HTMLMainImageLayer({
   const left = centerX - framedW / 2;
   const top = centerY - framedH / 2;
 
-  const handleScale = screenshot.scale > 0 ? 1 / screenshot.scale : 1;
+  const hasMotion = useImageStore((s) => s.timeline.tracks.length > 0);
+  const p3d = perspective3D ?? {
+    perspective: 2400,
+    rotateX: 0,
+    rotateY: 0,
+    rotateZ: 0,
+    translateX: 0,
+    translateY: 0,
+    scale: 1,
+  };
+  const effectivePerspective = Math.max(100, Math.round(p3d.perspective * (canvasH / 800)));
+
+  const perspective3DTransform = `
+    translate(${p3d.translateX * (canvasW / 100)}px, ${p3d.translateY * (canvasH / 100)}px)
+    scale(${p3d.scale})
+    rotateX(${p3d.rotateX}deg)
+    rotateY(${p3d.rotateY}deg)
+    rotateZ(${p3d.rotateZ + screenshot.rotation}deg)
+  `.replace(/\s+/g, ' ').trim();
+
+  const handleScale = p3d.scale > 0 ? 1 / p3d.scale : 1;
 
   const browserRadius = screenshot.radius;
 
@@ -511,26 +561,48 @@ export function HTMLMainImageLayer({
 
   return (
     <div
-      ref={containerRef}
-      data-main-image-layer="true"
-      data-export-clean-outline={isMainImageSelected ? 'true' : undefined}
-      onPointerDown={handleMouseDown}
+      data-3d-overlay="true"
+      data-untransformed-x={left}
+      data-untransformed-y={top}
+      data-untransformed-width={framedW}
+      data-untransformed-height={framedH}
       style={{
         position: 'absolute',
-        left: `${left}px`,
-        top: `${top}px`,
-        width: `${framedW}px`,
-        height: `${framedH}px`,
-        transform: `rotate(${screenshot.rotation}deg) scale(${screenshot.scale})`,
-        transformOrigin: 'center center',
-        cursor: isResizing ? 'default' : isDragging ? 'grabbing' : 'grab',
+        left: 0,
+        top: 0,
+        width: `${canvasW}px`,
+        height: `${canvasH}px`,
+        perspective: `${effectivePerspective}px`,
+        transformStyle: 'preserve-3d',
         zIndex: 10,
-        outline: isMainImageSelected ? '2px solid rgba(59, 130, 246, 0.5)' : 'none',
-        outlineOffset: '2px',
-        filter: shadowFilter,
+        pointerEvents: 'none',
+        overflow: 'hidden',
+        clipPath: 'inset(0 0 0 0)',
       }}
     >
       <ShadowDefinition id="main-shadow-flat" shadow={{ enabled: shadow.enabled, blur: shadow.softness, spread: shadow.spread, opacity: shadow.intensity, color: shadow.color, offsetX: shadow.offsetX ?? 0, offsetY: shadow.offsetY ?? 0 }} />
+      <div
+        ref={containerRef}
+        data-main-image-layer="true"
+        data-export-clean-outline={isMainImageSelected ? 'true' : undefined}
+        onPointerDown={handleMouseDown}
+        style={{
+          position: 'absolute',
+          left: `${left}px`,
+          top: `${top}px`,
+          width: `${framedW}px`,
+          height: `${framedH}px`,
+          transform: perspective3DTransform,
+          transformOrigin: 'center center',
+          cursor: isResizing ? 'default' : isDragging ? 'grabbing' : 'grab',
+          pointerEvents: 'auto',
+          zIndex: 10,
+          outline: isMainImageSelected ? '2px solid rgba(59, 130, 246, 0.5)' : 'none',
+          outlineOffset: '2px',
+          filter: shadowFilter,
+          transition: hasMotion ? 'none' : 'transform 0.125s linear',
+        }}
+      >
       {/* Frame container */}
       <div style={getFrameContainerStyle()}>
         {/* macOS title bar */}
@@ -553,51 +625,69 @@ export function HTMLMainImageLayer({
               filter: imageFilter,
               display: 'block',
               borderRadius: 'inherit',
+              clipPath: imageClipPath ?? undefined,
             }}
           />
         </div>
       </div>
 
-      {/* Resize handles — visible when selected, excluded from export */}
+      {/* Resize & Figma-style corner rotation handles — visible when selected, excluded from export */}
       {isMainImageSelected && (
         <>
           {(['tl', 'tr', 'bl', 'br'] as const).map((handle) => {
             const isTop = handle[0] === 't';
             const isLeft = handle[1] === 'l';
-            const cursor = (handle === 'tl' || handle === 'br') ? 'nwse-resize' : 'nesw-resize';
+            const resizeCursor = (handle === 'tl' || handle === 'br') ? 'nwse-resize' : 'nesw-resize';
             return (
-              <div
-                key={handle}
-                data-resize-handle="true"
-                onPointerDown={(e) => handleResizeMouseDown(e, handle)}
-                style={{
-                  position: 'absolute',
-                  width: '10px',
-                  height: '10px',
-                  backgroundColor: 'white',
-                  border: '2px solid rgba(59, 130, 246, 0.8)',
-                  borderRadius: '2px',
-                  top: isTop ? '-5px' : undefined,
-                  bottom: isTop ? undefined : '-5px',
-                  left: isLeft ? '-5px' : undefined,
-                  right: isLeft ? undefined : '-5px',
-                  cursor,
-                  zIndex: 20,
-                  pointerEvents: 'auto',
-                  transform: `scale(${handleScale})`,
-                }}
-              />
+              <React.Fragment key={handle}>
+                {/* Figma-style outer corner rotation hit zone */}
+                <div
+                  data-rotate-handle={handle}
+                  onPointerDown={handleRotateMouseDown}
+                  title="Drag to rotate"
+                  style={{
+                    position: 'absolute',
+                    width: '28px',
+                    height: '28px',
+                    top: isTop ? '-14px' : undefined,
+                    bottom: isTop ? undefined : '-14px',
+                    left: isLeft ? '-14px' : undefined,
+                    right: isLeft ? undefined : '-14px',
+                    cursor: ROTATE_CURSOR,
+                    zIndex: 19,
+                    pointerEvents: 'auto',
+                    transform: `scale(${handleScale})`,
+                  }}
+                />
+                {/* Inner corner resize handle */}
+                <div
+                  key={handle}
+                  data-resize-handle="true"
+                  onPointerDown={(e) => handleResizeMouseDown(e, handle)}
+                  title="Drag to resize"
+                  style={{
+                    position: 'absolute',
+                    width: '10px',
+                    height: '10px',
+                    backgroundColor: 'white',
+                    border: '2px solid rgba(59, 130, 246, 0.8)',
+                    borderRadius: '2px',
+                    top: isTop ? '-5px' : undefined,
+                    bottom: isTop ? undefined : '-5px',
+                    left: isLeft ? '-5px' : undefined,
+                    right: isLeft ? undefined : '-5px',
+                    cursor: resizeCursor,
+                    zIndex: 20,
+                    pointerEvents: 'auto',
+                    transform: `scale(${handleScale})`,
+                  }}
+                />
+              </React.Fragment>
             );
           })}
-
-          <CanvasObjectTopControls
-            handleScale={handleScale}
-            onRotatePointerDown={handleRotateMouseDown}
-            onRemove={handleRemoveImage}
-            objectLabel="image"
-          />
         </>
       )}
+      </div>
     </div>
   );
 }

@@ -129,3 +129,41 @@ test('a clip drag is a single undoable transaction and saved preset instances st
   assert.equal(useImageStore.getState().timeline.tracks.at(-1)?.keyframes[0].time,2000);
   useMotionLibrary.getState().remove('saved-test');
 });
+
+test('custom-asset animation captures current 3D perspective and rotation as its starting keyframe', () => {
+  const state = useImageStore.getState();
+  state.clearAnimationClips();
+  state.setPerspective3D({ rotateX: 18, rotateY: -14, rotateZ: 5, scale: 1.12, perspective: 1800 });
+  state.addAnimationClip('custom-asset', 0);
+  const rotXTrack = useImageStore.getState().timeline.tracks.find(t => t.keyframes.some(k => 'rotateX' in k.properties))!;
+  assert.equal(rotXTrack.keyframes[0].time, 0);
+  assert.equal(rotXTrack.keyframes[0].properties.rotateX, 18);
+  const rotYTrack = useImageStore.getState().timeline.tracks.find(t => t.keyframes.some(k => 'rotateY' in k.properties))!;
+  assert.equal(rotYTrack.keyframes[0].properties.rotateY, -14);
+});
+
+test('auto-keyframing updates an existing keyframe when within 60ms threshold and creates a new one when outside', () => {
+  const state = useImageStore.getState();
+  state.clearAnimationClips();
+  state.addAnimationClip('custom-asset', 0);
+
+  // Playhead at 0 (coincides with start keyframe at 0)
+  state.setPlayhead(20); // within 60ms threshold of 0
+  state.recordPropertyChange('scale', 1.8);
+  const scaleTrack1 = useImageStore.getState().timeline.tracks.find(t => t.keyframes.some(k => 'scale' in k.properties))!;
+  // Should update the existing keyframe at 0 instead of adding a new one
+  assert.equal(scaleTrack1.keyframes.length, 2);
+  assert.equal(scaleTrack1.keyframes[0].time, 0);
+  assert.equal(scaleTrack1.keyframes[0].properties.scale, 1.8);
+
+  // Playhead at 1200 (far from 0 and 2000)
+  state.setPlayhead(1200);
+  state.recordPropertyChange('scale', 2.4);
+  const scaleTrack2 = useImageStore.getState().timeline.tracks.find(t => t.keyframes.some(k => 'scale' in k.properties))!;
+  // Should now have 3 keyframes, with the new one at 1200
+  assert.equal(scaleTrack2.keyframes.length, 3);
+  const middleKey = scaleTrack2.keyframes.find(k => k.time === 1200);
+  assert.ok(middleKey, 'Middle keyframe at 1200 was created');
+  assert.equal(middleKey?.properties.scale, 2.4);
+  assert.equal(middleKey?.easing, 'ease-in-out-cubic');
+});

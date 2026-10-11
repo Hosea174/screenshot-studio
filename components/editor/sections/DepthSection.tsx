@@ -730,9 +730,9 @@ function OverlayTiltControls({ overlay, onUpdate }: OverlayControlProps) {
       <Slider
         value={[tilt.perspective]}
         onValueChange={(v) => setTilt({ perspective: v[0] })}
-        min={50}
-        max={1000}
-        step={10}
+        min={100}
+        max={8000}
+        step={25}
         label="Perspective"
         valueDisplay={`${tilt.perspective}px`}
       />

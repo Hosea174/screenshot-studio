@@ -11,6 +11,7 @@ import {
 } from './sections';
 import { cn } from '@/lib/utils';
 import { useImageStore, useEditorStore } from '@/lib/store';
+import { DEFAULT_OVERLAY_TILT } from '@/lib/overlay-style';
 import { AnimationPresetGallery } from '@/components/timeline/AnimationPresetGallery';
 import { Slider } from '@/components/ui/slider';
 import { Button } from '@/components/ui/button';
@@ -113,6 +114,13 @@ function TransformPreview({ mode }: { mode: ControlMode }) {
         const rawY = startRef.current.oY + dyNorm * maxOffsetY * 2;
         const snapped = snapOffset(rawX, rawY);
         setScreenshot({ offsetX: snapped.x, offsetY: snapped.y });
+        const state = useImageStore.getState();
+        if (!state.timeline.isPlaying && (state.activeRightPanelTab === 'animate' || state.animationClips.length > 0)) {
+          state.recordPropertyChanges({
+            translateX: Math.round(((snapped.x || 0) / (maxOffsetX * 2 || 1)) * 100 * 10) / 10,
+            translateY: Math.round(((snapped.y || 0) / (maxOffsetY * 2 || 1)) * 100 * 10) / 10,
+          });
+        }
       } else {
         setPerspective3D({
           rotateY: Math.max(-45, Math.min(45, startRef.current.rY + dxNorm * 90)),
@@ -276,9 +284,9 @@ function PerspectiveSliders() {
         <Slider
           value={[perspective3D.perspective]}
           onValueChange={(value) => setPerspective3D({ perspective: value[0] })}
-          min={500}
-          max={3000}
-          step={50}
+          min={100}
+          max={8000}
+          step={25}
           label="Depth"
           valueDisplay={`${perspective3D.perspective}px`}
         />
@@ -355,7 +363,13 @@ function ZoomSlider() {
   return (
     <Slider
       value={[imageScale / 100]}
-      onValueChange={(value) => setImageScale(Math.round(value[0] * 100))}
+      onValueChange={(value) => {
+        setImageScale(Math.round(value[0] * 100));
+        const state = useImageStore.getState();
+        if (!state.timeline.isPlaying && (state.activeRightPanelTab === 'animate' || state.animationClips.length > 0)) {
+          state.recordPropertyChange('scale', value[0]);
+        }
+      }}
       min={0.1}
       max={2}
       step={0.01}
@@ -365,9 +379,111 @@ function ZoomSlider() {
   );
 }
 
+function DepthSlider() {
+  const {
+    perspective3D,
+    setPerspective3D,
+    selectedOverlayId,
+    imageOverlays,
+    updateImageOverlay,
+  } = useImageStore();
+
+  const selectedOverlay = selectedOverlayId
+    ? imageOverlays.find((o) => o.id === selectedOverlayId)
+    : null;
+
+  const currentDepth = selectedOverlay
+    ? (selectedOverlay.tilt?.perspective ?? 2400)
+    : perspective3D.perspective;
+
+  const handleDepthChange = (val: number) => {
+    if (selectedOverlay) {
+      updateImageOverlay(selectedOverlay.id, {
+        tilt: {
+          ...(selectedOverlay.tilt ?? DEFAULT_OVERLAY_TILT),
+          perspective: val,
+        },
+      });
+    } else {
+      setPerspective3D({ perspective: val });
+    }
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between select-none">
+        <span className="text-xs text-muted-foreground">Depth</span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-muted-foreground tabular-nums">{currentDepth}px</span>
+          {currentDepth !== 2400 && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDepthChange(2400);
+              }}
+              className="text-[10px] text-muted-foreground/70 hover:text-foreground px-1 py-0.5 rounded hover:bg-foreground/5 transition-colors cursor-pointer"
+              title="Reset depth to default (2400px)"
+            >
+              Reset
+            </button>
+          )}
+        </div>
+      </div>
+      <Slider
+        value={[currentDepth]}
+        onValueChange={(val) => handleDepthChange(val[0])}
+        min={100}
+        max={8000}
+        step={25}
+      />
+    </div>
+  );
+}
+
+function TiltRotationSlider() {
+  const {
+    perspective3D,
+    setPerspective3D,
+    selectedOverlayId,
+    imageOverlays,
+    updateImageOverlay,
+  } = useImageStore();
+
+  const selectedOverlay = selectedOverlayId
+    ? imageOverlays.find((o) => o.id === selectedOverlayId)
+    : null;
+
+  if (selectedOverlay) {
+    return (
+      <Slider
+        value={[selectedOverlay.rotation]}
+        onValueChange={(value) =>
+          updateImageOverlay(selectedOverlay.id, { rotation: value[0] })
+        }
+        min={-180}
+        max={180}
+        step={1}
+        label="Rotation"
+        valueDisplay={`${selectedOverlay.rotation}°`}
+      />
+    );
+  }
+
+  return (
+    <Slider
+      value={[perspective3D.rotateZ]}
+      onValueChange={(value) => setPerspective3D({ rotateZ: value[0] })}
+      min={-45}
+      max={45}
+      step={1}
+      label="Rotation"
+      valueDisplay={`${perspective3D.rotateZ}°`}
+    />
+  );
+}
+
 function TransformControls() {
-  const perspective3D = useImageStore((s) => s.perspective3D);
-  const setPerspective3D = useImageStore((s) => s.setPerspective3D);
   const [controlMode, setControlMode] = React.useState<ControlMode>('zoom');
 
   return (
@@ -387,15 +503,11 @@ function TransformControls() {
       {controlMode === 'zoom' ? (
         <ZoomSlider />
       ) : (
-        <Slider
-          value={[perspective3D.rotateZ]}
-          onValueChange={(value) => setPerspective3D({ rotateZ: value[0] })}
-          min={-45}
-          max={45}
-          step={1}
-          label="Rotation"
-          valueDisplay={`${perspective3D.rotateZ}°`}
-        />
+        <div className="space-y-3">
+          <ZoomSlider />
+          <DepthSlider />
+          <TiltRotationSlider />
+        </div>
       )}
     </div>
   );

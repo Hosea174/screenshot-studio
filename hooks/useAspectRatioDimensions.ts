@@ -2,7 +2,6 @@ import { useMemo, useState, useEffect } from 'react';
 import { useImageStore } from '@/lib/store';
 import { getAspectRatioPreset, calculateFitDimensions, getAspectRatioCSS } from '@/lib/aspect-ratio-utils';
 import { MOBILE_BREAKPOINT } from '@/hooks/use-mobile';
-import { STORE_SHORTCUT_ROW_HEIGHT } from '@/lib/store-screenshots/config';
 import { TIMELINE_HEIGHT } from '@/lib/constants/editor-layout';
 
 export function useAspectRatioDimensions(options?: {
@@ -87,12 +86,9 @@ export function useResponsiveCanvasDimensions() {
     // never clips against the panels.
     const horizontalPadding = isMobileViewport ? 32 : 56;
     // header (h-16 = 64) + stage vertical pad
-    let verticalPadding = isMobileViewport ? 120 : 112;
-    if (!isMobileViewport) {
-      verticalPadding += STORE_SHORTCUT_ROW_HEIGHT;
-      if (showTimeline) {
-        verticalPadding += TIMELINE_HEIGHT;
-      }
+    let verticalPadding = isMobileViewport ? 120 : (showTimeline ? 72 : 100);
+    if (!isMobileViewport && showTimeline) {
+      verticalPadding += TIMELINE_HEIGHT;
     }
     // Desktop Animate chip docks under the stage (h-9 + bottom-4 + gap).
     // Portrait ratios are height-bound, so without this the chip overlaps.

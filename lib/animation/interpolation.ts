@@ -1,5 +1,6 @@
 import type {
   EasingFunction,
+  EasingPreset,
   AnimatableProperties,
   AnimationTrack,
   AnimationClip,
@@ -8,7 +9,7 @@ import type {
 import { DEFAULT_ANIMATABLE_PROPERTIES } from '@/types/animation';
 
 // Easing functions - take progress (0-1) and return eased progress (0-1)
-export const easingFunctions: Record<EasingFunction, (t: number) => number> = {
+export const easingFunctions: Record<EasingPreset, (t: number) => number> = {
   linear: (t) => t,
   hold: (t) => t === 1 ? 1 : 0,
   'ease-in-out-cubic': (t) => t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2,
@@ -40,6 +41,11 @@ export const easingFunctions: Record<EasingFunction, (t: number) => number> = {
   },
 };
 
+function cubicBezierCoordinate(t: number, a: number, b: number) {
+  const inverse = 1 - t;
+  return 3 * inverse * inverse * t * a + 3 * inverse * t * t * b + t * t * t;
+}
+
 /**
  * Apply easing function to get interpolated value
  */
@@ -47,8 +53,54 @@ export function applyEasing(
   progress: number,
   easing: EasingFunction
 ): number {
-  const easingFn = easingFunctions[easing] || easingFunctions.linear;
-  return easingFn(Math.max(0, Math.min(1, progress)));
+  const boundedProgress = Math.max(0, Math.min(1, progress));
+  if (boundedProgress === 0 || boundedProgress === 1) return boundedProgress;
+  if (easing.startsWith('cubic-bezier(')) {
+    const values = easing.slice(13, -1).split(',').map(Number);
+    if (values.length === 4 && values.every(Number.isFinite)) {
+      const [rawX1, y1, rawX2, y2] = values;
+      const x1 = Math.max(0, Math.min(1, rawX1));
+      const x2 = Math.max(0, Math.min(1, rawX2));
+      let low = 0;
+      let high = 1;
+      for (let i = 0; i < 18; i++) {
+        const mid = (low + high) / 2;
+        if (cubicBezierCoordinate(mid, x1, x2) < boundedProgress) low = mid;
+        else high = mid;
+      }
+      return cubicBezierCoordinate((low + high) / 2, y1, y2);
+    }
+  }
+  const easingFn = easingFunctions[easing as EasingPreset] || easingFunctions.linear;
+  return easingFn(boundedProgress);
+}
+
+/** Matching clip-path shapes interpolate; incompatible shapes switch at their keyframe. */
+export function getClipMaskAtTime(clips: AnimationClip[], tracks: AnimationTrack[], time: number, target = 'asset'): string | undefined {
+  let clipMask: string | undefined;
+  for (const clip of clips.filter(c => (c.target ?? 'asset') === target).sort((a, b) => a.startTime - b.startTime || a.id.localeCompare(b.id))) {
+    if (time < clip.startTime) continue;
+    const keys = tracks.filter(t => t.clipId === clip.id && t.isVisible).flatMap(t => t.keyframes.filter(k => k.clipMask !== undefined)).sort((a, b) => a.time - b.time);
+    const prev = keys.filter(k => k.time <= time).at(-1);
+    const next = keys.find(k => k.time > time);
+    if (!prev) continue;
+    clipMask = prev.clipMask;
+    if (!next || !prev.clipMask || !next.clipMask) continue;
+    const numberPattern = /[-+]?(?:\d*\.\d+|\d+\.?\d*)(?:e[-+]?\d+)?/gi;
+    const from = [...prev.clipMask.matchAll(numberPattern)];
+    const to = [...next.clipMask.matchAll(numberPattern)];
+    const shapeFrom = prev.clipMask.replace(numberPattern, '#');
+    const shapeTo = next.clipMask.replace(numberPattern, '#');
+    if (shapeFrom !== shapeTo || from.length !== to.length || next.time <= prev.time) continue;
+    const progress = applyEasing((time - prev.time) / (next.time - prev.time), next.easing);
+    let index = 0;
+    clipMask = prev.clipMask.replace(numberPattern, () => {
+      const a = Number(from[index][0]);
+      const b = Number(to[index++][0]);
+      return String(Number((a + (b - a) * progress).toFixed(3)));
+    });
+  }
+  return clipMask;
 }
 
 /**

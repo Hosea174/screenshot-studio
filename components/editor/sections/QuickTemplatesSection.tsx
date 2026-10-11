@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useImageStore } from "@/lib/store";
 import { toast } from "sonner";
+import { SectionWrapper } from "./SectionWrapper";
 
 export const predefinedPresets = [
   {
@@ -109,11 +110,10 @@ export function QuickTemplatesSection() {
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-          Quick Presets
-        </span>
+    <SectionWrapper
+      title="Quick Presets"
+      defaultOpen={true}
+      action={
         <button
           onClick={handleRandom}
           className="flex items-center gap-1 px-2 h-6 rounded-md bg-muted/60 hover:bg-accent text-[10px] text-muted-foreground hover:text-foreground transition-all"
@@ -123,9 +123,9 @@ export function QuickTemplatesSection() {
           </svg>
           Random
         </button>
-      </div>
-
-      <div className="grid grid-cols-2 gap-1.5">
+      }
+    >
+      <div className="grid grid-cols-2 gap-1.5 pt-1">
         {predefinedPresets.map((preset) => (
           <button
             key={preset.id}
@@ -137,6 +137,6 @@ export function QuickTemplatesSection() {
           </button>
         ))}
       </div>
-    </div>
+    </SectionWrapper>
   );
 }

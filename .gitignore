@@ -46,6 +46,8 @@ public/backgrounds
 
 prisma/migrations
 /lib/generated/prisma
+# Local MCP authentication token
+/mcp/.token
 # Prisma
 prisma/*.db
 prisma/*.db-journal

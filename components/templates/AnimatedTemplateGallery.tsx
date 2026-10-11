@@ -17,10 +17,12 @@ import {
   type AnimatedTemplate,
 } from '@/lib/animation/templates';
 import { getPresetById } from '@/lib/animation/presets';
+import { DEFAULT_ANIMATABLE_PROPERTIES } from '@/types/animation';
 import { presets } from '@/lib/constants/presets';
 import { TEMPLATE_DEMO_IMAGE_URL } from '@/lib/templates/demo-media';
 import { getImageTemplateById } from '@/lib/templates/image-templates';
 import { cn } from '@/lib/utils';
+import { CinematicTemplatePreview } from './CinematicTemplatePreview';
 
 type PreviewAnimation = {
   animate: {
@@ -43,22 +45,23 @@ function getTransform(template: AnimatedTemplate, keyframeIndex: number): string
     return 'perspective(2400px) translate3d(0%, 0%, 0) rotateX(0deg) rotateY(0deg) rotateZ(0deg) scale(1)';
   }
 
-  return `perspective(${properties.perspective}px) `
-    + `translate3d(${properties.translateX}%, ${properties.translateY}%, 0) `
-    + `rotateX(${properties.rotateX}deg) rotateY(${properties.rotateY}deg) `
-    + `rotateZ(${properties.rotateZ}deg) scale(${properties.scale})`;
+  const resolved = { ...DEFAULT_ANIMATABLE_PROPERTIES, ...properties };
+  return `perspective(${resolved.perspective}px) `
+    + `translate3d(${resolved.translateX}%, ${resolved.translateY}%, 0) `
+    + `rotateX(${resolved.rotateX}deg) rotateY(${resolved.rotateY}deg) `
+    + `rotateZ(${resolved.rotateZ}deg) scale(${resolved.scale})`;
 }
 
 function getPreviewAnimation(template: AnimatedTemplate): PreviewAnimation {
   const posterIndex = Math.max(
     0,
-    template.keyframes.findIndex(({ properties }) => properties.imageOpacity >= 1),
+    template.keyframes.findIndex(({ properties }) => (properties.imageOpacity ?? 1) >= 1),
   );
   const posterProperties = template.keyframes[posterIndex]?.properties;
 
   return {
     animate: {
-      opacity: template.keyframes.map((keyframe) => keyframe.properties.imageOpacity),
+      opacity: template.keyframes.map((keyframe) => keyframe.properties.imageOpacity ?? 1),
       transform: template.keyframes.map((_, index) => getTransform(template, index)),
     },
     poster: {
@@ -80,7 +83,13 @@ interface AnimatedTemplatePreviewProps {
   showBadges?: boolean;
 }
 
-export function AnimatedTemplatePreview({
+export function AnimatedTemplatePreview(props: AnimatedTemplatePreviewProps) {
+  return props.template.category === 'cinematic' || props.template.category === 'smooth'
+    ? <CinematicTemplatePreview {...props} />
+    : <BasicAnimatedTemplatePreview {...props} />;
+}
+
+function BasicAnimatedTemplatePreview({
   template,
   active = false,
   className,

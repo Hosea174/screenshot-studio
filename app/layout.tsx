@@ -39,6 +39,7 @@ import { AdFreeRouteLinks } from "@/components/AdFreeRouteLinks";
 import { getRootJsonLd } from "@/lib/seo/json-ld";
 import { ADSENSE_CLIENT } from "@/components/AdSenseScript";
 import { PRODUCT_FACTS, atLeast } from "@/lib/seo/product-facts";
+import { StudioMcpBridge } from "@/components/editor/StudioMcpBridge";
 
 // System UI fonts
 const geistSans = Geist({
@@ -473,6 +474,7 @@ gtag('config', 'G-WWTQR26VH4');`}
             <AdFreeRouteLinks />
             {children}
           </GlobalDropZone>
+          <StudioMcpBridge />
           <Toaster />
         </QueryProvider>
       </body>

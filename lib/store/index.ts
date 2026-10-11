@@ -19,16 +19,17 @@ import {
   createDeviceScreen,
   restoreMockupsFromLayoutSnapshot,
 } from "@/lib/device-mockups/layouts";
-import type { TimelineState, AnimationTrack, Keyframe, AnimatableProperties, AnimationClip } from "@/types/animation";
+import type { TimelineState, AnimationTrack, Keyframe, AnimatableProperties, AnimationClip, EasingFunction } from "@/types/animation";
 import { getClipInterpolatedProperties } from '@/lib/animation/interpolation';
 import { retimeClipTracks, clampClipDuration } from '@/lib/animation/retiming';
-import { useMotionLibrary, useMotionSelection, createCustomPreset, splitPropertyTracks } from '@/lib/animation/editor';
+import { useMotionLibrary, useMotionSelection, createCustomPreset, splitPropertyTracks, PROPERTY_CONTROLS } from '@/lib/animation/editor';
 import { DEFAULT_ANIMATABLE_PROPERTIES, DEFAULT_TIMELINE_STATE } from "@/types/animation";
 import { clonePresetTracks, getPresetById, ANIMATION_PRESETS } from "@/lib/animation/presets";
 import {
   buildAnimatedTemplateTimeline,
   getAnimatedTemplateById,
 } from "@/lib/animation/templates";
+import { getCinematicImageScale } from '@/lib/animation/cinematic-templates';
 import { presets as visualPresets, type PresetConfig } from "@/lib/constants/presets";
 import {
   TEMPLATE_DEMO_IMAGE_NAME,
@@ -607,6 +608,7 @@ export interface ImageState {
   activeDeviceLayoutId: DeviceLayoutId | null;
   deviceLayoutSnapshot: Mockup[] | null;
   imageOpacity: number;
+  imageClipPath: string | null;
   imageScale: number;
   imageBorder: ImageBorder;
   imageShadow: ImageShadow;
@@ -729,6 +731,15 @@ export interface ImageState {
   updateAnimationClip: (clipId: string, updates: Partial<AnimationClip>) => void;
   removeAnimationClip: (clipId: string) => void;
   clearAnimationClips: () => void;
+  recordPropertyChange: <K extends keyof AnimatableProperties>(
+    property: K,
+    value: AnimatableProperties[K],
+    easing?: EasingFunction
+  ) => boolean;
+  recordPropertyChanges: (
+    properties: Partial<AnimatableProperties>,
+    easing?: EasingFunction
+  ) => void;
 
   // Annotations (custom SVG)
   annotations: AnnotationShape[];
@@ -819,6 +830,7 @@ export const useImageStore = create<ImageState>()(
     activeDeviceLayoutId: null,
     deviceLayoutSnapshot: null,
     imageOpacity: 1,
+    imageClipPath: null,
     imageScale: 100,
     imageBorder: {
       enabled: false,
@@ -840,7 +852,7 @@ export const useImageStore = create<ImageState>()(
     imageStylePreset: 'default' as ImageStylePreset,
     shadowPreset: 'soft' as ShadowPreset,
     perspective3D: {
-      perspective: 200, // em units, converted to px
+      perspective: 2400,
       rotateX: 0,
       rotateY: 0,
       rotateZ: 0,
@@ -947,7 +959,7 @@ export const useImageStore = create<ImageState>()(
         shadowPreset: 'soft' as ShadowPreset,
         // Reset 3D perspective
         perspective3D: {
-          perspective: 200,
+          perspective: 2400,
           rotateX: 0,
           rotateY: 0,
           rotateZ: 0,
@@ -1034,7 +1046,7 @@ export const useImageStore = create<ImageState>()(
         shadowPreset: 'soft' as ShadowPreset,
         // Reset 3D perspective
         perspective3D: {
-          perspective: 200,
+          perspective: 2400,
           rotateX: 0,
           rotateY: 0,
           rotateZ: 0,
@@ -1537,6 +1549,48 @@ export const useImageStore = create<ImageState>()(
       const template = getAnimatedTemplateById(templateId);
       if (!template) return;
 
+      if (template.category === 'cinematic' || template.category === 'smooth') {
+        const animation = buildAnimatedTemplateTimeline(template);
+        if (!animation) return;
+        const state = get();
+        const mediaUrl = state.uploadedImageUrl ?? TEMPLATE_DEMO_IMAGE_URL;
+        const canvasWidth = state.canvasDimensions
+          ? Math.min(state.canvasDimensions.canvasW, state.canvasDimensions.canvasH * 9 / 16)
+          : 450;
+        const imageScale = getCinematicImageScale(state.imageBorder, canvasWidth);
+        const initial = { ...DEFAULT_ANIMATABLE_PROPERTIES, ...template.keyframes[0].properties };
+        const { perspective, rotateX, rotateY, rotateZ, translateX, translateY, scale } = initial;
+        trackPresetApply(`animated:${template.id}`, template.name);
+        set({
+          ...(!state.uploadedImageUrl ? { uploadedImageUrl: mediaUrl, imageName: TEMPLATE_DEMO_IMAGE_NAME } : {}),
+          selectedAspectRatio: '9_16',
+          customDimensions: null,
+          imageScale,
+          imageOpacity: initial.imageOpacity,
+          imageClipPath: template.keyframes[0].clipMask ?? null,
+          perspective3D: { perspective, rotateX, rotateY, rotateZ, translateX, translateY, scale },
+          editorMode: 'screenshot',
+          mockups: [],
+          activeDeviceLayoutId: null,
+          deviceLayoutSnapshot: null,
+          animationClips: [animation.clip],
+          animationBase: { ...DEFAULT_ANIMATABLE_PROPERTIES },
+          camera: { cameraX: 0, cameraY: 0, cameraZoom: 1, cameraRotateX: 0, cameraRotateY: 0, cameraRotateZ: 0 },
+          timeline: {
+            ...DEFAULT_TIMELINE_STATE,
+            duration: animation.duration,
+            tracks: splitPropertyTracks(animation.tracks),
+            isPlaying: true,
+          },
+          showTimeline: true,
+          showTemplates: false,
+        });
+        useEditorStore.getState().setCanvas({ padding: 0 });
+        useEditorStore.getState().setScreenshot({ src: mediaUrl, offsetX: 0, offsetY: 0, rotation: 0, scale: imageScale / 100 });
+        useMotionSelection.getState().selectClip(animation.clip.id);
+        return;
+      }
+
       const imageTemplate = getImageTemplateById(template.visualPresetId);
       const visualPreset = imageTemplate?.preset
         ?? visualPresets.find((preset) => preset.id === template.visualPresetId);
@@ -1633,6 +1687,11 @@ export const useImageStore = create<ImageState>()(
           ...perspective,
         },
       });
+
+      const state = get();
+      if (!state.timeline.isPlaying && (state.activeRightPanelTab === 'animate' || state.animationClips.length > 0)) {
+        state.recordPropertyChanges(perspective);
+      }
     },
 
     setImageFilter: (key: keyof ImageFilters, value: number) => {
@@ -1694,7 +1753,7 @@ export const useImageStore = create<ImageState>()(
         imageStylePreset: 'default' as ImageStylePreset,
         shadowPreset: 'soft' as ShadowPreset,
         perspective3D: {
-          perspective: 200,
+          perspective: 2400,
           rotateX: 0,
           rotateY: 0,
           rotateZ: 0,
@@ -1988,7 +2047,41 @@ export const useImageStore = create<ImageState>()(
 
     // Animation clips
     addAnimationClip: (presetId, startTime, target = 'asset') => {
-      const preset = presetId === 'custom-asset' || presetId === 'custom-camera' ? createCustomPreset(presetId === 'custom-camera' ? 'camera' : 'asset', get().animationClips.length > 0 ? getClipInterpolatedProperties(get().animationClips, get().timeline.tracks, startTime, target === 'asset' ? get().animationBase : DEFAULT_ANIMATABLE_PROPERTIES, target) : target === 'asset' ? { ...DEFAULT_ANIMATABLE_PROPERTIES, ...get().perspective3D, ...get().camera, imageOpacity: get().imageOpacity } : DEFAULT_ANIMATABLE_PROPERTIES) : ANIMATION_PRESETS.find(p => p.id === presetId) ?? useMotionLibrary.getState().presets.find(p => p.id === presetId);
+      const current3D = get().perspective3D;
+      const editorScreenshot = useEditorStore.getState().screenshot;
+      const canvasDim = get().canvasDimensions;
+      const canvasW = canvasDim?.canvasW || 800;
+      const canvasH = canvasDim?.canvasH || 600;
+      const poseTranslateX = current3D.translateX !== 0
+        ? current3D.translateX
+        : Math.round(((editorScreenshot.offsetX || 0) / canvasW) * 100 * 10) / 10;
+      const poseTranslateY = current3D.translateY !== 0
+        ? current3D.translateY
+        : Math.round(((editorScreenshot.offsetY || 0) / canvasH) * 100 * 10) / 10;
+      const poseScale = current3D.scale !== 1 ? current3D.scale : (editorScreenshot.scale ?? 1);
+      const currentAssetPose: AnimatableProperties = {
+        ...DEFAULT_ANIMATABLE_PROPERTIES,
+        ...current3D,
+        ...get().camera,
+        translateX: poseTranslateX,
+        translateY: poseTranslateY,
+        scale: poseScale,
+        rotateZ: current3D.rotateZ !== 0 ? current3D.rotateZ : (editorScreenshot.rotation ?? 0),
+        imageOpacity: get().imageOpacity,
+      };
+      if (presetId === 'custom-asset' && (editorScreenshot.offsetX || editorScreenshot.offsetY)) {
+        useEditorStore.getState().setScreenshot({ offsetX: 0, offsetY: 0 });
+      }
+      const preset = presetId === 'custom-asset' || presetId === 'custom-camera'
+        ? createCustomPreset(
+            presetId === 'custom-camera' ? 'camera' : 'asset',
+            get().animationClips.length > 0
+              ? getClipInterpolatedProperties(get().animationClips, get().timeline.tracks, startTime, target === 'asset' ? get().animationBase : DEFAULT_ANIMATABLE_PROPERTIES, target)
+              : target === 'asset'
+                ? currentAssetPose
+                : DEFAULT_ANIMATABLE_PROPERTIES
+          )
+        : ANIMATION_PRESETS.find(p => p.id === presetId) ?? useMotionLibrary.getState().presets.find(p => p.id === presetId);
       if (!preset) return;
 
       trackAnimationClipAdd(presetId, preset.name, preset.duration);
@@ -2068,6 +2161,99 @@ export const useImageStore = create<ImageState>()(
         animationClips: [],
         timeline: { ...DEFAULT_TIMELINE_STATE },
       });
+    },
+
+    recordPropertyChange: (property, value, easing = 'ease-in-out-cubic') => {
+      const state = get();
+      if (state.timeline.isPlaying) return false;
+      if (state.animationClips.length === 0 && state.timeline.tracks.length === 0) return false;
+
+      const selectedClipId = useMotionSelection.getState().clipId;
+      const clip = state.animationClips.find(c => c.id === selectedClipId)
+        || state.animationClips.find(c => state.timeline.playhead >= c.startTime && state.timeline.playhead <= c.startTime + c.duration)
+        || state.animationClips[0];
+      if (!clip) return false;
+
+      const targetTime = Math.round(
+        Math.max(clip.startTime, Math.min(clip.startTime + clip.duration, state.timeline.playhead))
+      );
+
+      const track = state.timeline.tracks.find(
+        t => t.clipId === clip.id && t.keyframes.some(k => property in k.properties)
+      );
+      if (track?.isLocked) return false;
+
+      if (track) {
+        const existing = track.keyframes.find(k => Math.abs(k.time - targetTime) <= 60);
+        if (existing) {
+          get().updateKeyframe(track.id, existing.id, {
+            properties: { [property]: value },
+          });
+          return true;
+        }
+        get().addKeyframe(track.id, {
+          time: targetTime,
+          properties: { [property]: value },
+          easing,
+        });
+        return true;
+      }
+
+      // Track doesn't exist yet for this property on this clip:
+      const control = PROPERTY_CONTROLS.find(p => p.key === property);
+      const trackName = control?.label ?? property;
+      const trackType = control?.group === 'camera' ? 'camera' : 'transform';
+      const baseValue = (clip.target && clip.target !== 'asset'
+        ? DEFAULT_ANIMATABLE_PROPERTIES
+        : get().animationBase)[property];
+
+      const keys: Keyframe[] = [
+        {
+          id: `kf-${Date.now()}-1`,
+          time: clip.startTime,
+          properties: { [property]: baseValue },
+          easing,
+        },
+        {
+          id: `kf-${Date.now()}-2`,
+          time: clip.startTime + clip.duration,
+          properties: { [property]: baseValue },
+          easing,
+        },
+      ];
+
+      const existingAtBoundary = keys.find(k => Math.abs(k.time - targetTime) <= 60);
+      if (existingAtBoundary) {
+        existingAtBoundary.properties = { [property]: value };
+      } else {
+        keys.push({
+          id: `kf-${Date.now()}-3`,
+          time: targetTime,
+          properties: { [property]: value },
+          easing,
+        });
+      }
+
+      keys.sort((a, b) => a.time - b.time);
+
+      get().addTrack({
+        name: trackName,
+        type: trackType,
+        clipId: clip.id,
+        isLocked: false,
+        isVisible: true,
+        keyframes: keys,
+      });
+
+      return true;
+    },
+
+    recordPropertyChanges: (properties, easing = 'ease-in-out-cubic') => {
+      for (const [key, val] of Object.entries(properties)) {
+        if (val !== undefined && typeof val === 'number') {
+          get().recordPropertyChange(key as keyof AnimatableProperties, val, easing);
+        }
+      }
     },
 
     // Annotations (custom SVG)

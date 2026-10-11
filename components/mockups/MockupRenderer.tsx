@@ -5,7 +5,6 @@ import { DEFAULT_MEDIA_SHADOW } from "@/components/controls/ShadowAdjustments";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import Moveable from "react-moveable";
 import { DeviceShell } from "./DeviceShell";
-import { CanvasObjectTopControls } from "@/components/canvas/html/CanvasObjectTopControls";
 import { getMockupDefinition, MAX_DEVICE_MOCKUPS } from "@/lib/constants/mockups";
 import { blobToDataUrl } from "@/lib/image-storage";
 import { useDeviceUIStore } from "@/lib/store/device-ui";
@@ -263,36 +262,6 @@ function MockupRenderer({ mockup, canvasWidth, canvasHeight, zIndex }: MockupRen
         />
       </div>
 
-      {isSelected && !interacting && !isEditingScreen ? (
-        <div
-          data-device-controls="true"
-          data-export-exclude="true"
-          style={{
-            position: "absolute",
-            left,
-            top,
-            width,
-            height,
-            transform: `rotate(${mockup.rotation}deg)`,
-            transformOrigin: "center",
-            pointerEvents: "none",
-            zIndex: zIndex + MAX_DEVICE_MOCKUPS + 1,
-          }}
-        >
-          <CanvasObjectTopControls
-            handleScale={sceneScale > 0 ? 1 / sceneScale : 1}
-            onRotatePointerDown={handleRotatePointerDown}
-            onRotateKeyDown={handleRotateKeyDown}
-            onRemove={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              removeMockup(mockup.id);
-              setSelectedDeviceId(null);
-            }}
-            objectLabel="device"
-          />
-        </div>
-      ) : null}
 
       {isSelected && targetElement && !isEditingScreen ? (
         <Moveable
@@ -358,7 +327,7 @@ export function MockupSceneRenderer({ canvasWidth, canvasHeight }: { canvasWidth
         inset: 0,
         zIndex: 20,
         pointerEvents: "none",
-        perspective: `${Math.max(100, perspective3D.perspective * 10)}px`,
+        perspective: `${Math.max(100, perspective3D.perspective >= 400 ? perspective3D.perspective : perspective3D.perspective * 10)}px`,
       }}
     >
       <div

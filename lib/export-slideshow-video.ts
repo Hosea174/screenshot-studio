@@ -28,7 +28,9 @@ export function isExportAborted(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-const ANIMATION_FPS = 60;
+// DOM capture is the expensive part of animation export. 30fps is a standard
+// video rate and halves the number of full-canvas captures versus 60fps.
+const ANIMATION_FPS = 30;
 const SLIDESHOW_FPS = 30; // Static frames don't need 60fps — halves all frame work
 
 // Bitrates for different quality levels (for WebCodecs)
@@ -90,6 +92,7 @@ function saveStoreState() {
     playhead: store.timeline.playhead,
     isPlaying: store.timeline.isPlaying,
     imageOpacity: store.imageOpacity,
+    imageClipPath: store.imageClipPath,
     activeSlideId: store.activeSlideId,
   };
 }
@@ -97,16 +100,17 @@ function saveStoreState() {
 /**
  * Restore store state (used on export error)
  */
-function restoreStoreState(saved: ReturnType<typeof saveStoreState>) {
+function restoreStoreState(saved: ReturnType<typeof saveStoreState>, resumePlayback = true) {
   const store = useImageStore.getState();
   store.setPerspective3D(saved.perspective3D);
   store.setCamera(saved.camera);
   store.setPlayhead(saved.playhead);
   store.setImageOpacity(saved.imageOpacity);
+  useImageStore.setState({ imageClipPath: saved.imageClipPath });
   if (saved.activeSlideId) {
     store.setActiveSlide(saved.activeSlideId);
   }
-  if (saved.isPlaying) store.startPlayback();
+  if (resumePlayback && saved.isPlaying) store.startPlayback();
 }
 
 /**
@@ -172,17 +176,22 @@ export async function exportSlideshowVideo(options: VideoExportOptions = {}) {
   useImageStore.getState().stopPlayback();
 
   const signal = progress.start();
+  let attemptedWebCodecs = false;
 
   try {
     let result;
 
     if (format === "webm") {
-      result = isWebCodecsSupported() && await isVpxSupported()
-        ? await exportSlideshowWithWebCodecs("webm", quality, progress, signal)
-        : await exportSlideshowWithFFmpeg("webm", quality, progress, signal);
+      if (isWebCodecsSupported() && await isVpxSupported()) {
+        attemptedWebCodecs = true;
+        result = await exportSlideshowWithWebCodecs("webm", quality, progress, signal);
+      } else {
+        result = await exportSlideshowWithFFmpeg("webm", quality, progress, signal);
+      }
     } else if (format === "gif") {
       result = await exportSlideshowWithFFmpeg("gif", quality, progress, signal);
     } else if (isWebCodecsSupported() && await isH264Supported()) {
+      attemptedWebCodecs = true;
       result = await exportSlideshowWithWebCodecs("mp4", quality, progress, signal);
     } else {
       result = await exportSlideshowWithFFmpeg("mp4", quality, progress, signal);
@@ -191,8 +200,19 @@ export async function exportSlideshowVideo(options: VideoExportOptions = {}) {
     restoreStoreState(savedState);
     return result;
   } catch (error) {
+    if (attemptedWebCodecs && !signal?.aborted && !isExportAborted(error)) {
+      console.warn("WebCodecs slideshow export failed; retrying with FFmpeg", error);
+      progress.set(0);
+      try {
+        const result = await exportSlideshowWithFFmpeg(format as FFmpegFormat, quality, progress, signal);
+        restoreStoreState(savedState);
+        return result;
+      } catch (fallbackError) {
+        error = fallbackError;
+      }
+    }
     progress.done();
-    restoreStoreState(savedState);
+    restoreStoreState(savedState, false);
     throw error;
   }
 }
@@ -414,6 +434,7 @@ async function _exportSlideshowWithMediaRecorder(
  */
 export async function exportAnimationVideo(options: VideoExportOptions = {}) {
   const { format = "mp4", quality = "high", encoder = "auto" } = options;
+  const allowEncoderFallback = encoder === "auto";
   const progress = useExportProgress.getState();
   const savedState = saveStoreState();
   useImageStore.getState().stopPlayback();
@@ -447,7 +468,21 @@ export async function exportAnimationVideo(options: VideoExportOptions = {}) {
         const webCodecsFormat = format === "webm" ? "webm" : "mp4";
         const codecSupported = webCodecsFormat === "webm" ? await isVpxSupported() : await isH264Supported();
         if (isWebCodecsSupported() && codecSupported) {
-          result = await exportAnimationWithWebCodecs(webCodecsFormat, quality, progress, signal);
+          try {
+            result = await exportAnimationWithWebCodecs(webCodecsFormat, quality, progress, signal);
+          } catch (error) {
+            // A codec can be reclaimed while the page is backgrounded even
+            // after isConfigSupported() succeeded. Automatic exports should
+            // recover through the more reliable FFmpeg/WASM path instead of
+            // failing with the browser's low-level encoder error.
+            if (!allowEncoderFallback || signal?.aborted || isExportAborted(error)) {
+              throw error;
+            }
+
+            console.warn("WebCodecs export failed; retrying with FFmpeg", error);
+            progress.set(0);
+            result = await exportAnimationWithFFmpeg(format as FFmpegFormat, quality, progress, signal);
+          }
           break;
         }
         // Fall through to FFmpeg if WebCodecs unavailable
@@ -469,7 +504,7 @@ export async function exportAnimationVideo(options: VideoExportOptions = {}) {
     return result;
   } catch (error) {
     progress.done();
-    restoreStoreState(savedState);
+    restoreStoreState(savedState, false);
     throw error;
   }
 }

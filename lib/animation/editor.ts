@@ -1,15 +1,21 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { AnimationPreset, AnimationTrack, AnimatableProperties, EasingFunction } from '@/types/animation';
+import type { AnimationPreset, AnimationTrack, AnimatableProperties, EasingPreset } from '@/types/animation';
 import { DEFAULT_ANIMATABLE_PROPERTIES } from '@/types/animation';
 
 /** Each property owns its key times, visibility and lock independently. */
 export function splitPropertyTracks(tracks: AnimationTrack[]): AnimationTrack[] {
-  return tracks.flatMap(track => [...new Set(track.keyframes.flatMap(k => Object.keys(k.properties)))].map(property => {
-    const key = property as keyof AnimatableProperties;
-    return { ...track, id: crypto.randomUUID(), name: PROPERTY_CONTROLS.find(p => p.key === key)?.label ?? property,
-      keyframes: track.keyframes.filter(k => key in k.properties).map(k => ({ ...k, id: crypto.randomUUID(), properties: { [key]: k.properties[key] } })) };
-  }));
+  return tracks.flatMap(track => {
+    const properties: AnimationTrack[] = [...new Set(track.keyframes.flatMap(k => Object.keys(k.properties)))].map(property => {
+      const key = property as keyof AnimatableProperties;
+      return { ...track, id: crypto.randomUUID(), name: PROPERTY_CONTROLS.find(p => p.key === key)?.label ?? property,
+        keyframes: track.keyframes.filter(k => key in k.properties).map(k => ({ ...k, id: crypto.randomUUID(), properties: { [key]: k.properties[key] } })) };
+    });
+    const maskKeys = track.keyframes.filter(k => k.clipMask !== undefined);
+    if (!maskKeys.length) return properties;
+    const maskTrack: AnimationTrack = { ...track, id: crypto.randomUUID(), name: 'Clip mask', keyframes: maskKeys.map(k => ({ ...k, id: crypto.randomUUID(), properties: {} })) };
+    return [...properties, maskTrack];
+  });
 }
 
 export function createCustomPreset(group: 'asset' | 'camera', state: AnimatableProperties = DEFAULT_ANIMATABLE_PROPERTIES): AnimationPreset {
@@ -30,7 +36,7 @@ export const PROPERTY_CONTROLS: { key: keyof AnimatableProperties; label: string
   { key: 'rotateX', label: 'Tilt X', min: -180, max: 180, step: 1, unit: '°', group: 'asset' },
   { key: 'rotateY', label: 'Tilt Y', min: -180, max: 180, step: 1, unit: '°', group: 'asset' },
   { key: 'rotateZ', label: 'Rotation', min: -360, max: 360, step: 1, unit: '°', group: 'asset' },
-  { key: 'perspective', label: 'Perspective', min: 200, max: 6000, step: 10, unit: 'px', group: 'asset' },
+  { key: 'perspective', label: 'Perspective', min: 100, max: 8000, step: 25, unit: 'px', group: 'asset' },
   { key: 'imageOpacity', label: 'Opacity', min: 0, max: 1, step: 0.01, unit: '×', group: 'asset' },
   { key: 'cameraX', label: 'Camera X', min: -1200, max: 1200, step: 1, unit: 'px', group: 'camera' },
   { key: 'cameraY', label: 'Camera Y', min: -1200, max: 1200, step: 1, unit: 'px', group: 'camera' },
@@ -40,7 +46,7 @@ export const PROPERTY_CONTROLS: { key: keyof AnimatableProperties; label: string
   { key: 'cameraRotateZ', label: 'Camera roll', min: -180, max: 180, step: 1, unit: '°', group: 'camera' },
 ];
 
-export const EASE_LABELS: Record<EasingFunction, string> = {
+export const EASE_LABELS: Record<EasingPreset, string> = {
   linear: 'Linear', 'ease-in': 'Ease in', 'ease-out': 'Ease out', 'ease-in-out': 'Smooth',
   'ease-in-cubic': 'Cubic in', 'ease-out-cubic': 'Cubic out', 'ease-in-expo': 'Expo in',
   'ease-out-expo': 'Expo out', 'ease-in-out-cubic': 'Cinematic', 'ease-in-out-sine': 'Gentle',
@@ -49,7 +55,7 @@ export const EASE_LABELS: Record<EasingFunction, string> = {
 
 interface MotionSelection {
   clipId: string | null;
-  keyframe: { trackId: string; keyframeId: string; property: keyof AnimatableProperties } | null;
+  keyframe: { trackId: string; keyframeId: string; property: keyof AnimatableProperties | 'clipMask' } | null;
   selectClip: (id: string | null) => void;
   selectKeyframe: (keyframe: MotionSelection['keyframe']) => void;
 }

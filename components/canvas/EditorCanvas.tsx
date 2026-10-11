@@ -16,9 +16,6 @@ import {
   shouldRenderSourceImage,
 } from "@/lib/device-mockups/layouts";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { StoreScreenshotsShortcut } from "@/components/store-screenshots/StoreScreenshotsFeatureCard";
-import { STORE_SHORTCUT_GAP } from "@/lib/store-screenshots/config";
-import { TEMPLATE_DEMO_IMAGE_NAME } from "@/lib/templates/demo-media";
 import { useBackgroundImageReady } from "@/hooks/useBackgroundImageReady";
 import { addVideoLayer, isVideoFile } from '@/lib/video-layers';
 import { toast } from 'sonner';
@@ -35,7 +32,6 @@ export function EditorCanvas() {
     isPreviewing,
     stopPreview,
     uploadedImageUrl,
-    imageName,
     showTimeline,
     editorMode,
     mockups,
@@ -144,14 +140,7 @@ export function EditorCanvas() {
               ? "flex items-center justify-center"
               : "flex flex-col items-center justify-center",
           )}
-          style={isMobile ? undefined : { rowGap: STORE_SHORTCUT_GAP }}
         >
-          {!isMobile && imageName !== TEMPLATE_DEMO_IMAGE_NAME ? (
-            <div className="shrink-0 max-lg:hidden">
-              <StoreScreenshotsShortcut />
-            </div>
-          ) : null}
-
           <CanvasStageShell
             id="image-render-card"
             breathe={!stageReady}

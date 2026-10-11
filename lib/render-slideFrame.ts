@@ -45,15 +45,16 @@ function disableOverlayTransitions(): () => void {
 }
 
 /**
- * Wait for React to commit DOM changes and browser to paint.
- * Uses double-RAF to ensure React's synchronous flush and the browser's
- * paint cycle have both completed before we capture the DOM.
+ * Let React commit the latest timeline frame before DOM capture. A timer task
+ * is used instead of requestAnimationFrame because browsers throttle or pause
+ * animation frames for inactive tabs, which can stall a multi-frame export.
  */
 function waitForDOMCommit(): Promise<void> {
   return new Promise<void>((resolve) => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => resolve());
-    });
+    setTimeout(() => {
+      forceReflow();
+      resolve();
+    }, 0);
   });
 }
 
@@ -316,7 +317,8 @@ export async function renderAnimationToFrames(
       }
 
       // Calculate interpolated properties at this time using clip-aware interpolation
-      store.setPlayhead(time);
+      // The export progress indicator is separate; avoid re-rendering the
+      // timeline UI for every captured frame.
       applyAnimationFrame(time);
 
       // Force DOM reflow so transforms apply instantly (transitions are disabled)
@@ -403,7 +405,8 @@ export async function streamAnimationToEncoder(
       }
 
       // Calculate interpolated properties at this time using clip-aware interpolation
-      store.setPlayhead(time);
+      // The export progress indicator is separate; avoid re-rendering the
+      // timeline UI for every captured frame.
       applyAnimationFrame(time);
 
       // Force DOM reflow so transforms apply instantly (transitions are disabled)

@@ -328,14 +328,16 @@ export class WebCodecsVideoEncoder {
 
     // Backpressure: if encoder queue is building up, yield to the browser.
     if (this.encoder.encodeQueueSize > 8) {
+      const drainDeadline = Date.now() + 30_000;
       while (this.encoder && this.encoder.encodeQueueSize > 2) {
-        await new Promise<void>((resolve) => {
-          if (typeof requestAnimationFrame !== 'undefined') {
-            requestAnimationFrame(() => resolve());
-          } else {
-            setTimeout(resolve, 8);
-          }
-        });
+        if (this.encoderError) throw this.encoderError;
+        if (Date.now() >= drainDeadline) {
+          throw new Error('Video encoder stalled while draining frames.');
+        }
+        // Do not wait for requestAnimationFrame here: browsers pause RAF in
+        // background tabs, which can leave export stuck while waiting for the
+        // encoder queue to drain.
+        await new Promise<void>((resolve) => setTimeout(resolve, 8));
       }
     }
   }
@@ -348,8 +350,22 @@ export class WebCodecsVideoEncoder {
       throw new Error('Encoder not initialized');
     }
 
-    // Flush remaining frames
-    await this.encoder.flush();
+    // Flush remaining frames, but do not leave exports hanging indefinitely if
+    // the browser has reclaimed the underlying codec.
+    let flushTimeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        this.encoder.flush(),
+        new Promise<never>((_, reject) => {
+          flushTimeout = setTimeout(
+            () => reject(new Error('Video encoder timed out while finalizing.')),
+            30_000
+          );
+        }),
+      ]);
+    } finally {
+      if (flushTimeout) clearTimeout(flushTimeout);
+    }
 
     // Finalize the muxer
     this.muxer.finalize();

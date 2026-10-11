@@ -4,7 +4,6 @@ import * as React from 'react';
 import { MockupGallery, MockupControls } from '@/components/mockups';
 import { useImageStore } from '@/lib/store';
 import { useDeviceUIStore } from '@/lib/store/device-ui';
-import { StoreScreenshotsFeatureCard } from '@/components/store-screenshots/StoreScreenshotsFeatureCard';
 import { SectionWrapper } from './SectionWrapper';
 
 export function DeviceFramesSection(): React.JSX.Element {
@@ -34,7 +33,6 @@ export function DeviceFramesSection(): React.JSX.Element {
 
   return (
     <>
-      <StoreScreenshotsFeatureCard />
       <SectionWrapper title="Devices">
         <div
           className="min-w-0 transition-[opacity,transform] duration-150 ease-out motion-reduce:transition-none"

@@ -323,9 +323,9 @@ export function Perspective3DControls() {
         <Slider
           value={[perspective3D.perspective]}
           onValueChange={(value) => setPerspective3D({ perspective: value[0] })}
-          min={50}
-          max={1000}
-          step={10}
+          min={100}
+          max={8000}
+          step={25}
           label="Perspective"
           valueDisplay={`${perspective3D.perspective}px`}
         />
