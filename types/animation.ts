@@ -80,6 +80,7 @@ export interface AnimationTrack {
 // The overall timeline state
 export interface TimelineState {
   duration: number; // total duration in milliseconds
+  durationLocked?: boolean; // Preserve an explicitly chosen or fit-to-bar duration.
   playhead: number; // current position in milliseconds
   isPlaying: boolean;
   isLooping: boolean;
@@ -90,6 +91,7 @@ export interface TimelineState {
 // Default timeline state
 export const DEFAULT_TIMELINE_STATE: TimelineState = {
   duration: 5000, // Still images default to five seconds.
+  durationLocked: false,
   playhead: 0,
   isPlaying: false,
   isLooping: true,

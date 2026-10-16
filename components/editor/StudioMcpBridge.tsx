@@ -14,10 +14,13 @@ import { buildOutputName, buildProcessOptions, DEFAULT_TOOL_SETTINGS, type Batch
 import { TOOLS } from '@/lib/seo/tools';
 import { getEditorProjectRuntime, useEditorProjectSession } from '@/lib/editor-projects/session';
 import { getActiveEditorProjectId, getEditorProject, listEditorProjects } from '@/lib/editor-projects/storage';
-import { withVideoCanvasImages, withVideoCanvasSnapshot } from '@/lib/video-layers';
+import { addVideoLayer, replaceOverlayMedia, withVideoCanvasImages, withVideoCanvasSnapshot } from '@/lib/video-layers';
+import { fitImageClipToTimeline, fitVideoClipToTimeline, setVideoSpeed, splitVideoAt, trimImageAt, trimVideoAt, updateImageClip, updateVideoClip } from '@/lib/video-editing';
+import { beginMotionDrag, redoEditor, undoEditor } from '@/lib/animation/drag-history';
+import { deleteEditorTemplate, listEditorTemplates } from '@/lib/editor-projects/storage';
 
 const ACTIONS: Record<string, readonly string[]> = {
-  image: ['setUploadedImageUrl', 'replaceTemplateMedia', 'clearImage', 'setGradient', 'setBorderRadius', 'setBackgroundBorderRadius', 'setAspectRatio', 'setCustomDimensions', 'setBackgroundConfig', 'setBackgroundType', 'setBackgroundValue', 'setBackgroundOpacity', 'setBackgroundBlur', 'setBackgroundNoise', 'addTextOverlay', 'updateTextOverlay', 'removeTextOverlay', 'clearTextOverlays', 'addImageOverlay', 'updateImageOverlay', 'removeImageOverlay', 'clearImageOverlays', 'addMockup', 'updateMockup', 'removeMockup', 'clearMockups', 'duplicateMockup', 'reorderMockup', 'clearDeviceLayout', 'applyDeviceLayout', 'setImageOpacity', 'setImageScale', 'setImageBorder', 'setImageShadow', 'setImageStylePreset', 'setShadowPreset', 'applyVisualPreset', 'applyAnimatedTemplate', 'setPerspective3D', 'setImageFilter', 'resetImageFilters', 'resetCanvasSettings', 'setExportSettings', 'exportImage', 'setSlideshow', 'setActiveSlide', 'removeSlide', 'startPreview', 'resetSlideshow', 'stopPreview', 'setTimeline', 'setShowTimeline', 'toggleTimeline', 'setPlayhead', 'togglePlayback', 'startPlayback', 'stopPlayback', 'addKeyframe', 'updateKeyframe', 'removeKeyframe', 'addTrack', 'updateTrack', 'removeTrack', 'applyAnimationPreset', 'clearTimeline', 'setTimelineDuration', 'addAnimationClip', 'updateAnimationClip', 'removeAnimationClip', 'clearAnimationClips', 'addAnnotation', 'updateAnnotation', 'removeAnnotation', 'clearAnnotations', 'setActiveAnnotationTool', 'setSelectedAnnotationId', 'setAnnotationDefaults', 'addBlurRegion', 'updateBlurRegion', 'removeBlurRegion', 'clearBlurRegions', 'setActiveRightPanelTab', 'reorderImageOverlay', 'setShowTemplates', 'setEditorMode', 'setBrowserUrl', 'setBrowserHeaderSize', 'setCanvasDimensions', 'toggleRulers', 'toggleGrid', 'setRulerInterval', 'setSelectedOverlayId', 'setIsMainImageSelected'],
+  image: ['setUploadedImageUrl', 'replaceTemplateMedia', 'clearImage', 'setGradient', 'setBorderRadius', 'setBackgroundBorderRadius', 'setAspectRatio', 'setCustomDimensions', 'setBackgroundConfig', 'setBackgroundType', 'setBackgroundValue', 'setBackgroundOpacity', 'setBackgroundBlur', 'setBackgroundNoise', 'addTextOverlay', 'updateTextOverlay', 'removeTextOverlay', 'clearTextOverlays', 'addImageOverlay', 'updateImageOverlay', 'removeImageOverlay', 'clearImageOverlays', 'addMockup', 'updateMockup', 'removeMockup', 'clearMockups', 'duplicateMockup', 'reorderMockup', 'clearDeviceLayout', 'applyDeviceLayout', 'setImageOpacity', 'setImageScale', 'setImageBorder', 'setImageShadow', 'setImageStylePreset', 'setShadowPreset', 'applyVisualPreset', 'applyAnimatedTemplate', 'setPerspective3D', 'setImageFilter', 'resetImageFilters', 'resetCanvasSettings', 'setExportSettings', 'exportImage', 'setSlideshow', 'setActiveSlide', 'removeSlide', 'startPreview', 'resetSlideshow', 'stopPreview', 'setTimeline', 'setShowTimeline', 'toggleTimeline', 'setPlayhead', 'togglePlayback', 'startPlayback', 'stopPlayback', 'addKeyframe', 'updateKeyframe', 'removeKeyframe', 'addTrack', 'updateTrack', 'removeTrack', 'applyAnimationPreset', 'clearTimeline', 'setTimelineDuration', 'addAnimationClip', 'updateAnimationClip', 'removeAnimationClip', 'clearAnimationClips', 'addAnnotation', 'updateAnnotation', 'removeAnnotation', 'clearAnnotations', 'setActiveAnnotationTool', 'setSelectedAnnotationId', 'setAnnotationDefaults', 'addBlurRegion', 'updateBlurRegion', 'removeBlurRegion', 'clearBlurRegions', 'setActiveRightPanelTab', 'reorderImageOverlay', 'setShowTemplates', 'setEditorMode', 'setBrowserUrl', 'setBrowserHeaderSize', 'setCanvasDimensions', 'toggleRulers', 'toggleGrid', 'setRulerInterval', 'setSelectedOverlayId', 'setSelectedOverlayIds', 'setIsMainImageSelected'],
   editor: ['setScreenshot', 'setBackground', 'setShadow', 'setPattern', 'setFrame', 'setCanvas', 'setNoise'],
   device: ['setSelectedDeviceId', 'setEditingScreenDeviceId', 'openGallery', 'closeGallery', 'reconcileMockups', 'resetDeviceUI'],
 };
@@ -73,10 +76,10 @@ function compactProjectState() {
   const projectSession = useEditorProjectSession.getState();
   return {
     currentProject: projectSession.projects.find(project => project.id === projectSession.activeProjectId) ?? null,
-    editor: { mode: s.editorMode, hasImage: !!s.uploadedImageUrl, imageName: s.imageName, activeSlideId: s.activeSlideId, slides: s.slides.map(({ id, name, duration }) => ({ id, name, duration })), selectedOverlayId: s.selectedOverlayId, isMainImageSelected: s.isMainImageSelected },
+    editor: { mode: s.editorMode, hasImage: !!s.uploadedImageUrl, imageName: s.imageName, mainImageClip: { startTime: s.mainImageStartTime ?? 0, duration: s.mainImageDuration ?? s.timeline.duration }, activeSlideId: s.activeSlideId, slides: s.slides.map(({ id, name, duration }) => ({ id, name, duration })), selectedOverlayId: s.selectedOverlayId, selectedOverlayIds: s.selectedOverlayIds, isMainImageSelected: s.isMainImageSelected },
     canvas: { selectedAspectRatio: s.selectedAspectRatio, customDimensions: s.customDimensions, canvas: editor.canvas },
     design: { background: s.backgroundConfig, backgroundBlur: s.backgroundBlur, backgroundNoise: s.backgroundNoise, imageOpacity: s.imageOpacity, imageScale: s.imageScale, imageBorder: s.imageBorder, imageShadow: s.imageShadow, perspective3D: s.perspective3D, imageFilters: s.imageFilters, exportSettings: s.exportSettings },
-    layers: { text: s.textOverlays, images: s.imageOverlays.map(({ src: _src, ...layer }) => ({ ...layer, hasSource: !!_src })), mockups: s.mockups.map(({ screen, ...mockup }) => ({ ...mockup, screen: { ...screen, src: undefined, hasSource: !!screen.src } })) },
+    layers: { text: s.textOverlays, images: s.imageOverlays.map(({ src: _src, poster: _poster, ...layer }) => ({ ...layer, hasSource: !!_src, hasPoster: !!_poster })), mockups: s.mockups.map(({ screen, ...mockup }) => ({ ...mockup, screen: { ...screen, src: undefined, hasSource: !!screen.src } })) },
     slideshow: { settings: s.slideshow, slides: s.slides.map(({ id, name, duration }) => ({ id, name, duration })) },
     annotations: s.annotations,
     blurRegions: s.blurRegions,
@@ -120,6 +123,126 @@ async function runCommand(operation: string, payload: Record<string, unknown> = 
     return { ...result, projects: useEditorProjectSession.getState().projects };
   }
   if (operation === 'inspect_project') return compactProjectState();
+  if (operation === 'list_templates') {
+    const templates = await listEditorTemplates();
+    return { templates: templates.map(({ previewImage, ...template }) => ({ ...template, hasPreview: Boolean(previewImage) })) };
+  }
+  if (operation === 'save_template') {
+    const name = String(payload.name ?? '').trim();
+    if (!name || name.length > 80) throw new Error('Template name must contain 1–80 characters.');
+    const template = await getEditorProjectRuntime().saveTemplate(name);
+    return { template, templates: (await listEditorTemplates()).map(({ previewImage, ...item }) => ({ ...item, hasPreview: Boolean(previewImage) })) };
+  }
+  if (operation === 'apply_template') {
+    const templateId = String(payload.templateId ?? '');
+    if (!templateId) throw new Error('templateId is required. Call list_templates first.');
+    const project = await getEditorProjectRuntime().applyTemplate(templateId);
+    return { project, state: compactProjectState() };
+  }
+  if (operation === 'delete_template') {
+    const templateId = String(payload.templateId ?? '');
+    if (!templateId) throw new Error('templateId is required. Call list_templates first.');
+    if (payload.confirmDestructive !== true) throw new Error('Deleting a saved template is permanent. Set confirmDestructive:true to proceed.');
+    await deleteEditorTemplate(templateId);
+    return { deletedId: templateId, templates: (await listEditorTemplates()).map(({ previewImage, ...item }) => ({ ...item, hasPreview: Boolean(previewImage) })) };
+  }
+  if (operation === 'select_assets') {
+    const ids = payload.overlayIds;
+    if (!Array.isArray(ids) || !ids.every(id => typeof id === 'string')) throw new Error('overlayIds must be an array of image/video overlay IDs from inspect_project.');
+    const before = useImageStore.getState();
+    const unknown = ids.filter(id => !before.imageOverlays.some(overlay => overlay.id === id));
+    if (unknown.length) throw new Error(`Unknown asset ID(s): ${unknown.join(', ')}. Call inspect_project first.`);
+    if (payload.mainImageSelected === true) {
+      if (ids.length) throw new Error('The main image cannot be combined with multi-overlay selection. Pass overlayIds:[] to select only the main image.');
+      useImageStore.getState().setIsMainImageSelected(true);
+    } else {
+      before.setSelectedOverlayIds(ids);
+      if (ids.length === 0) useImageStore.getState().setIsMainImageSelected(false);
+    }
+    return { selectedOverlayIds: useImageStore.getState().selectedOverlayIds, state: compactProjectState() };
+  }
+  if (operation === 'edit_media_timeline') {
+    const assetId = String(payload.assetId ?? '');
+    if (!assetId) throw new Error('assetId is required. Use an overlay ID from inspect_project, or __main_image__ for the main image.');
+    const mode = String(payload.mode ?? '');
+    const overlay = image.imageOverlays.find(item => item.id === assetId);
+    const isMain = assetId === '__main_image__';
+    if (!overlay && !isMain) throw new Error('Media asset not found. Call inspect_project for current asset IDs.');
+    if (isMain && !image.uploadedImageUrl) throw new Error('There is no main image in this project.');
+    if (mode === 'trim-left' || mode === 'trim-right') {
+      const ok = (overlay?.mediaType === 'video' ? trimVideoAt : trimImageAt)(assetId, mode === 'trim-left' ? 'left' : 'right');
+      if (!ok) throw new Error('Move the playhead inside the media clip before trimming.');
+    } else if (mode === 'fit') {
+      if (overlay?.mediaType === 'video') fitVideoClipToTimeline(assetId, payload.fitMode === 'speed' ? 'speed' : 'trim');
+      else fitImageClipToTimeline(assetId);
+    } else if (mode === 'split') {
+      if (overlay?.mediaType !== 'video') throw new Error('Only video clips can be split.');
+      const rightSegmentId = splitVideoAt(assetId);
+      if (!rightSegmentId) throw new Error('Move the playhead inside the video clip before splitting.');
+      return { state: compactProjectState(), rightSegmentId };
+    } else if (mode === 'move') {
+      const startTime = Number(payload.startTimeMs);
+      if (!Number.isFinite(startTime) || startTime < 0) throw new Error('startTimeMs must be a non-negative number.');
+      const finish = beginMotionDrag();
+      try {
+        if (isMain || overlay?.mediaType !== 'video') updateImageClip(assetId, { startTime });
+        else updateVideoClip(assetId, { startTime });
+      } finally { finish(); }
+    } else if (mode === 'set-range') {
+      const startTime = Number(payload.startTimeMs);
+      const duration = Number(payload.durationMs);
+      if (!Number.isFinite(startTime) || startTime < 0 || !Number.isFinite(duration) || duration <= 0) throw new Error('set-range requires a non-negative startTimeMs and positive durationMs.');
+      if (isMain || overlay?.mediaType !== 'video') {
+        const finish = beginMotionDrag();
+        try { updateImageClip(assetId, { startTime, clipDuration: duration }); }
+        finally { finish(); }
+      }
+      else throw new Error('Use video trim handles or mode trim-left/trim-right to change a video source range.');
+    } else if (mode === 'set-speed') {
+      if (overlay?.mediaType !== 'video') throw new Error('Playback speed applies only to video clips.');
+      const speed = Number(payload.speed);
+      if (!Number.isFinite(speed) || speed < 0.1 || speed > 16) throw new Error('speed must be between 0.1 and 16.');
+      setVideoSpeed(assetId, speed);
+    } else throw new Error('Supported modes: move, trim-left, trim-right, fit, split, set-range (images), set-speed (videos).');
+    return { state: compactProjectState() };
+  }
+  if (operation === 'add_media_files') {
+    const files = Array.isArray(payload.files) ? payload.files.map(fileFromData) : [];
+    if (!files.length || files.length > 20 || !files.every(file => file instanceof File && file.size <= 32 * 1024 * 1024)) throw new Error('Add 1–20 local image/video files, up to 32 MB each.');
+    const added: string[] = [];
+    for (const file of files as File[]) {
+      if (file.type.startsWith('video/')) {
+        await addVideoLayer(file);
+        const id = useImageStore.getState().imageOverlays.at(-1)?.id;
+        if (id) added.push(id);
+      } else if (file.type.startsWith('image/')) {
+        const url = URL.createObjectURL(file);
+        try {
+          const imageElement = new Image(); imageElement.src = url; await imageElement.decode();
+          const current = useImageStore.getState();
+          const width = current.canvasDimensions?.canvasW ?? 700;
+          const height = current.canvasDimensions?.canvasH ?? 600;
+          current.addImageOverlay({ src: url, mediaWidth: imageElement.naturalWidth, mediaHeight: imageElement.naturalHeight, position: { x: width / 2, y: height / 2 }, size: Math.min(width, height) * 0.42, rotation: 0, opacity: 1, flipX: false, flipY: false, isVisible: true, isCustom: true });
+          const id = useImageStore.getState().imageOverlays.at(-1)?.id;
+          if (id) { added.push(id); useImageStore.getState().setSelectedOverlayId(id); }
+        } catch (error) { URL.revokeObjectURL(url); throw error; }
+      } else throw new Error(`Unsupported media type for ${file.name}.`);
+    }
+    return { added, state: compactProjectState() };
+  }
+  if (operation === 'replace_media_asset') {
+    const assetId = String(payload.assetId ?? '');
+    const file = fileFromData(payload.file);
+    if (!assetId || !(file instanceof File)) throw new Error('Provide assetId and a local image/video file.');
+    await replaceOverlayMedia(assetId, file);
+    return { replaced: assetId, state: compactProjectState() };
+  }
+  if (operation === 'history') {
+    const direction = payload.direction;
+    if (direction !== 'undo' && direction !== 'redo') throw new Error('direction must be undo or redo.');
+    if (direction === 'undo') undoEditor(); else redoEditor();
+    return { direction, state: compactProjectState() };
+  }
   if (operation === 'inspect_ui') {
     const visible = (element: Element) => { const rect = element.getBoundingClientRect(); const style = getComputedStyle(element); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'; };
     const controls = [...document.querySelectorAll<HTMLElement>('button, [role="button"], input, textarea, select, [role="checkbox"], [role="switch"], a[href], [role="tab"]')].filter(visible).slice(0, 300).map((element, index) => {
@@ -136,8 +259,14 @@ async function runCommand(operation: string, payload: Record<string, unknown> = 
       if (destination.origin !== location.origin) throw new Error('Navigation is limited to pages on this Screenshot Studio origin.');
       history.pushState({}, '', destination.pathname + destination.search + destination.hash); window.dispatchEvent(new PopStateEvent('popstate')); return { ok: true, navigatingTo: destination.pathname };
     }
+    const dispatchKey = (target: EventTarget, key: string) => {
+      const modifiers = Array.isArray(payload.modifiers) ? payload.modifiers : [];
+      const code = /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : /^\d$/.test(key) ? `Digit${key}` : ({ ' ': 'Space', '`': 'Backquote', '[': 'BracketLeft', ']': 'BracketRight' } as Record<string, string>)[key] ?? key;
+      const init = { key, code, bubbles: true, cancelable: true, ctrlKey: modifiers.includes('ctrl'), altKey: modifiers.includes('alt'), shiftKey: modifiers.includes('shift'), metaKey: modifiers.includes('meta') };
+      target.dispatchEvent(new KeyboardEvent('keydown', init)); target.dispatchEvent(new KeyboardEvent('keyup', init));
+    };
     if (kind === 'press' && !targetName) {
-      const key = String(payload.value ?? ''); window.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true, cancelable: true })); window.dispatchEvent(new KeyboardEvent('keyup', { key, code: key, bubbles: true, cancelable: true })); return { ok: true, pressed: key };
+      const key = String(payload.value ?? ''); dispatchKey(window, key); return { ok: true, pressed: key, modifiers: payload.modifiers ?? [] };
     }
     const elements = [...document.querySelectorAll<HTMLElement>('button, [role="button"], input, textarea, select, [role="checkbox"], [role="switch"], a[href], [role="tab"]')];
     const normalize = (value: string) => value.trim().toLocaleLowerCase().replace(/\s+/g, ' ');
@@ -157,7 +286,7 @@ async function runCommand(operation: string, payload: Record<string, unknown> = 
       const requested = String(payload.value ?? ''); const option = [...element.options].find(candidate => candidate.value === requested || candidate.label === requested);
       if (!option) throw new Error(`No select option matches “${requested}”.`); element.value = option.value; element.dispatchEvent(new Event('change', { bubbles: true }));
     } else if (kind === 'press') {
-      element.focus(); const key = String(payload.value ?? ''); element.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true, cancelable: true })); element.dispatchEvent(new KeyboardEvent('keyup', { key, code: key, bubbles: true, cancelable: true }));
+      element.focus(); dispatchKey(element, String(payload.value ?? ''));
     } else if (kind === 'upload') {
       if (!(element instanceof HTMLInputElement) || element.type !== 'file') throw new Error('upload requires a file input.');
       const files = Array.isArray(payload.files) ? payload.files.map(fileFromData) : [fileFromData(payload.file)];

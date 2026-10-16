@@ -1,11 +1,13 @@
 import { create } from "zustand";
-import type { EditorProjectSummary } from "./storage";
+import type { EditorProjectSummary, EditorTemplateSummary } from "./storage";
 
 export interface EditorProjectRuntime {
   createProject: () => Promise<EditorProjectSummary>;
   openProject: (id: string) => Promise<EditorProjectSummary>;
   renameProject: (id: string, name: string) => Promise<EditorProjectSummary>;
   deleteProject: (id: string) => Promise<{ deletedId: string; activeProjectId: string | null }>;
+  saveTemplate: (name: string) => Promise<EditorTemplateSummary>;
+  applyTemplate: (id: string) => Promise<EditorProjectSummary>;
   flush: () => Promise<void>;
 }
 

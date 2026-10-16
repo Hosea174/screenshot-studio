@@ -14,13 +14,42 @@ export function videoClipEnd(overlay: ImageOverlay) {
   return (overlay.startTime ?? 0) + videoClipDuration(overlay);
 }
 
-export function videoVisibleAt(overlay: ImageOverlay, time: number) {
-  return time >= (overlay.startTime ?? 0) && (overlay.loop || time < videoClipEnd(overlay));
+export function imageClipDuration(overlay: ImageOverlay, timelineEnd = 5000) {
+  return Math.max(0, overlay.clipDuration ?? Math.max(0, timelineEnd - (overlay.startTime ?? 0)));
+}
+
+export function imageClipEnd(overlay: ImageOverlay, timelineEnd = 5000) {
+  return (overlay.startTime ?? 0) + imageClipDuration(overlay, timelineEnd);
+}
+
+export function mediaClipEnd(overlay: ImageOverlay, timelineEnd = 5000) {
+  return overlay.mediaType === 'video' ? videoClipEnd(overlay) : imageClipEnd(overlay, timelineEnd);
+}
+
+export function mediaVisibleAt(overlay: ImageOverlay, time: number, timelineEnd?: number) {
+  if (overlay.mediaType === 'video') return videoVisibleAt(overlay, time, timelineEnd);
+  if (overlay.clipDuration === undefined && overlay.startTime === undefined) return true;
+  const start = overlay.startTime ?? 0;
+  const end = imageClipEnd(overlay, timelineEnd);
+  return clipVisibleAt(start, end - start, time, timelineEnd);
+}
+
+export function clipVisibleAt(start: number, duration: number, time: number, timelineEnd?: number) {
+  const end = start + duration;
+  const isFinalTimelineFrame = timelineEnd !== undefined && Math.abs(time - timelineEnd) <= 1 && Math.abs(end - timelineEnd) <= 1;
+  return time >= start && (time < end || isFinalTimelineFrame);
+}
+
+export function videoVisibleAt(overlay: ImageOverlay, time: number, timelineEnd?: number) {
+  const clipEnd = videoClipEnd(overlay);
+  const isFinalTimelineFrame = timelineEnd !== undefined
+    && Math.abs(time - timelineEnd) <= 1
+    && Math.abs(clipEnd - timelineEnd) <= 1;
+  return time >= (overlay.startTime ?? 0) && (overlay.loop || time < clipEnd || isFinalTimelineFrame);
 }
 
 export function mediaTimelineDuration(overlays: ImageOverlay[]) {
-  const videos = overlays.filter(o => o.mediaType === 'video');
-  return videos.length ? Math.max(500, ...videos.map(videoClipEnd)) : 5000;
+  return Math.max(5000, ...overlays.map(overlay => mediaClipEnd(overlay, 5000)));
 }
 
 /** Source seconds for an output timestamp in milliseconds, shared with preview. */

@@ -25,7 +25,6 @@ import {
   hasVisibleMockups,
   shouldRenderSourceImage,
 } from "@/lib/device-mockups/layouts";
-import { shouldIgnoreEditorShortcut } from "@/lib/editor-shortcuts";
 import { TemplateLibraryDrawer } from "@/components/templates/TemplateLibraryDrawer";
 import { ALLOWED_IMAGE_TYPES, MAX_IMAGE_SIZE } from "@/lib/constants";
 import { useDeviceUIStore } from "@/lib/store/device-ui";
@@ -163,6 +162,37 @@ function EditorMain() {
         return;
       }
 
+      // This is a browser-editor shortcut, so keep it on the capture phase and
+      // independent of whichever sidebar control currently owns focus.
+      if (event.ctrlKey && !event.metaKey && !event.altKey && event.code === "Backquote") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (!event.repeat) state.toggleTimeline();
+        return;
+      }
+
+      if (event.ctrlKey && !event.metaKey && !event.altKey && (event.code === "ArrowLeft" || event.code === "ArrowRight")) {
+        const clipsById = new Map(state.animationClips.map(clip => [clip.id, clip]));
+        const visibleOverlayIds = new Set(state.imageOverlays.filter(overlay => overlay.isVisible !== false).map(overlay => overlay.id));
+        const keyframeTimes = [...new Set(state.timeline.tracks
+          .filter(track => track.isVisible === true)
+          .filter(track => {
+            const target = clipsById.get(track.clipId ?? '')?.target;
+            return !target || target === 'asset' || visibleOverlayIds.has(target);
+          })
+          .flatMap(track => track.keyframes.map(keyframe => keyframe.time)))].sort((a, b) => a - b);
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (event.repeat) return;
+        state.stopPlayback();
+        useMotionSelection.getState().selectKeyframe(null);
+        const nextTime = event.code === "ArrowLeft"
+          ? keyframeTimes.filter(time => time < state.timeline.playhead - 1).at(-1) ?? 0
+          : keyframeTimes.find(time => time > state.timeline.playhead + 1) ?? state.timeline.duration;
+        state.setPlayhead(nextTime);
+        return;
+      }
+
       if (event.ctrlKey && event.altKey && !event.metaKey && !isTyping && (event.code === "ArrowLeft" || event.code === "ArrowRight")) {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -185,17 +215,6 @@ function EditorMain() {
   const hasContent = hasSourceContent || (
     editorMode === "device" && hasVisibleMockups(mockups)
   ) || imageOverlays.length > 0 || textOverlays.length > 0;
-  React.useEffect(() => {
-    if (isMobile) return;
-    const handleTimelineShortcut = (event: KeyboardEvent) => {
-      if (shouldIgnoreEditorShortcut(event) || !event.ctrlKey || event.metaKey || event.altKey || event.code !== "Backquote") return;
-      event.preventDefault();
-      toggleTimeline();
-    };
-    window.addEventListener("keydown", handleTimelineShortcut);
-    return () => window.removeEventListener("keydown", handleTimelineShortcut);
-  }, [isMobile, toggleTimeline]);
-
   React.useEffect(() => {
     trackEditorOpen();
   }, []);

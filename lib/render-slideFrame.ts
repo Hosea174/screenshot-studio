@@ -281,7 +281,8 @@ export async function renderAnimationToFrames(
   const { timeline, slides, slideshow, setActiveSlide } = store;
   const { duration, tracks } = timeline;
 
-  if (tracks.length === 0 && slides.length <= 1 && !store.imageOverlays.some(o => o.mediaType === 'video')) {
+  const hasVisualMedia = Boolean(store.uploadedImageUrl) || store.imageOverlays.some(o => o.isVisible);
+  if (tracks.length === 0 && !store.animationClips.length && slides.length <= 1 && !hasVisualMedia) {
     throw new Error("No animation tracks to render");
   }
 
@@ -322,6 +323,7 @@ export async function renderAnimationToFrames(
       // Calculate interpolated properties at this time using clip-aware interpolation
       // The export progress indicator is separate; avoid re-rendering the
       // timeline UI for every captured frame.
+      useImageStore.setState(s => ({ timeline: { ...s.timeline, playhead: time } }));
       applyAnimationFrame(time);
 
       // Force DOM reflow so transforms apply instantly (transitions are disabled)
@@ -372,7 +374,8 @@ export async function streamAnimationToEncoder(
   const { timeline, slides, slideshow, setActiveSlide } = store;
   const { duration, tracks } = timeline;
 
-  if (tracks.length === 0 && !store.animationClips.length && slides.length <= 1 && !store.imageOverlays.some(o => o.mediaType === 'video')) {
+  const hasVisualMedia = Boolean(store.uploadedImageUrl) || store.imageOverlays.some(o => o.isVisible);
+  if (tracks.length === 0 && !store.animationClips.length && slides.length <= 1 && !hasVisualMedia) {
     throw new Error("No animation tracks to render");
   }
 

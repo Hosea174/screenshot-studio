@@ -34,7 +34,10 @@ export function editingClip(target?: string) {
   if (state.timeline.isPlaying) return undefined;
   const playhead = state.timeline.playhead;
   const matchesTarget = (clip: AnimationClip) => !target || (clip.target ?? 'asset') === target;
-  const isActive = (clip: AnimationClip) => playhead >= clip.startTime && playhead <= clip.startTime + clip.duration;
+  // Keyframe times are stored in rounded milliseconds while clip durations can
+  // be fractional. Include the end boundary with a tiny tolerance so editing a
+  // final keyframe still targets its clip instead of falling through to base state.
+  const isActive = (clip: AnimationClip) => playhead >= clip.startTime - 1 && playhead <= clip.startTime + clip.duration + 1;
   const selected = state.animationClips.find(c => c.id === useMotionSelection.getState().clipId);
   if (selected && matchesTarget(selected) && isActive(selected)) return selected;
   // Canvas and sidebar edits should still reach the active target clip when its

@@ -11,6 +11,8 @@ export interface BackgroundConfig {
   value: GradientKey | SolidColorKey | string;
   opacity?: number;
   hsl?: { hue: number; saturation: number; lightness: number };
+  /** Per-source color corrections, so switching background images never carries another image's HSL. */
+  hslByImage?: Record<string, { hue: number; saturation: number; lightness: number }>;
 }
 
 const isCssGradient = (value: string): boolean =>

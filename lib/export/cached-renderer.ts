@@ -1,6 +1,6 @@
 import { Input, BlobSource, MP4, QTFF, WEBM, VideoSampleSink, type VideoSample } from 'mediabunny';
 import type { CachedScene, MediaLayer } from './cached-scene';
-import { videoTimeAt, videoVisibleAt } from './video-timing';
+import { mediaVisibleAt, videoTimeAt } from './video-timing';
 import { getClipInterpolatedProperties } from '@/lib/animation/interpolation';
 import { DEFAULT_ANIMATABLE_PROPERTIES } from '@/types/animation';
 
@@ -60,8 +60,9 @@ export async function createCachedRenderer(scene: CachedScene, fps: number, tota
         timings.decoding += performance.now() - decodeStart;
         const time = index * 1000 / fps;
         const hasMotion = scene.tracks.some(t => t.isVisible && t.keyframes.length);
+        const hasTimedMedia = scene.layers.some(layer => layer.kind === 'media' && layer.overlay.mediaType !== 'video' && layer.overlay.clipDuration !== undefined && ((layer.overlay.startTime ?? 0) > 0 || (layer.overlay.startTime ?? 0) + layer.overlay.clipDuration < scene.timelineDuration - 1));
         const startsNow = scene.layers.some(l => index > 0 && (l.kind === 'media' ? l.overlay.startTime ?? 0 : l.from ?? 0) > (index - 1) * 1000 / fps && (l.kind === 'media' ? l.overlay.startTime ?? 0 : l.from ?? 0) <= time);
-        if (!changed && !hasMotion && !startsNow) return canvas;
+        if (!changed && !hasMotion && !startsNow && !hasTimedMedia) return canvas;
         const drawStart = performance.now();
         ctx.clearRect(0, 0, scene.width, scene.height);
         ctx.save();
@@ -73,7 +74,7 @@ export async function createCachedRenderer(scene: CachedScene, fps: number, tota
             continue;
           }
           const o = layer.overlay;
-          if (o.mediaType === 'video' && !videoVisibleAt(o, time)) continue;
+          if (!mediaVisibleAt(o, time, scene.timelineDuration)) continue;
           const motion = getClipInterpolatedProperties(scene.clips, scene.tracks, time, DEFAULT_ANIMATABLE_PROPERTIES, o.id);
           const sample = samples.get(layer);
           const width = o.mediaWidth ?? layer.bitmap?.width ?? 640;
@@ -82,9 +83,11 @@ export async function createCachedRenderer(scene: CachedScene, fps: number, tota
           const drawWidth = ratio >= 1 ? o.size : o.size * ratio;
           const drawHeight = ratio >= 1 ? o.size / ratio : o.size;
           ctx.save();
-          ctx.translate(o.position.x + motion.translateX / 100 * o.size, o.position.y + motion.translateY / 100 * o.size);
+          // Match CSS percentage translation against the rendered element's
+          // actual width and height (not its longest dimension).
+          ctx.translate(o.position.x + motion.translateX / 100 * drawWidth, o.position.y + motion.translateY / 100 * drawHeight);
           ctx.rotate((o.rotation + motion.rotateZ) * Math.PI / 180);
-          ctx.scale(motion.scale * (o.flipX ? -1 : 1), motion.scale * (o.flipY ? -1 : 1));
+          ctx.scale(motion.scale * (o.scale ?? 1) * (o.flipX ? -1 : 1), motion.scale * (o.scale ?? 1) * (o.flipY ? -1 : 1));
           ctx.globalAlpha = o.opacity * motion.imageOpacity;
           clipMedia(ctx, drawWidth, drawHeight, o.radius ?? 0);
           if (sample) sample.draw(ctx, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);

@@ -28,6 +28,18 @@ async function callEditor(operation: string, payload: Record<string, unknown> = 
   return body.result;
 }
 
+async function readStudioFile(input: string, allowed: Record<string, string>) {
+  const absolute = path.resolve(input);
+  const info = await stat(absolute);
+  if (info.size > 32 * 1024 * 1024) throw new Error(`${path.basename(absolute)} exceeds 32 MB.`);
+  const extension = path.extname(absolute).toLowerCase();
+  const mime = allowed[extension];
+  if (!mime) throw new Error(`${path.basename(absolute)} has an unsupported file type.`);
+  return { _studioFile: true, name: path.basename(absolute), type: mime, base64: (await readFile(absolute)).toString('base64') };
+}
+
+const studioMediaTypes: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.avif': 'image/avif', '.gif': 'image/gif', '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime' };
+
 function jsonResult(value: unknown) { return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }], structuredContent: value as Record<string, unknown> }; }
 
 const server = new McpServer({ name: 'screenshot-studio', version: '1.0.0' });
@@ -71,15 +83,57 @@ server.registerTool('inspect_ui', {
 
 server.registerTool('interact_ui', {
   title: 'Operate Screenshot Studio UI', description: 'Click, fill, select, toggle, press a key, upload a local file, or navigate to any same-origin Screenshot Studio route using accessible control names. Call inspect_ui first to find the control name. This makes page-specific and standalone UI features available through MCP as well as the structured project actions.',
-  inputSchema: { kind: z.enum(['click', 'fill', 'select', 'toggle', 'press', 'upload', 'navigate']), target: z.string().optional(), value: z.string().optional(), path: z.string().optional(), exact: z.boolean().default(true), index: z.number().int().min(0).default(0), filePaths: z.array(z.string()).max(20).optional() },
-}, async ({ kind, target, value, path: destination, exact, index, filePaths }) => {
+  inputSchema: { kind: z.enum(['click', 'fill', 'select', 'toggle', 'press', 'upload', 'navigate']), target: z.string().optional(), value: z.string().optional(), path: z.string().optional(), exact: z.boolean().default(true), index: z.number().int().min(0).default(0), filePaths: z.array(z.string()).max(20).optional(), modifiers: z.array(z.enum(['ctrl', 'alt', 'shift', 'meta'])).optional() },
+}, async ({ kind, target, value, path: destination, exact, index, filePaths, modifiers }) => {
   const files = kind === 'upload' ? await Promise.all((filePaths ?? []).map(async input => {
     const absolute = path.resolve(input); const info = await stat(absolute); if (info.size > 32 * 1024 * 1024) throw new Error(`${path.basename(absolute)} exceeds 32 MB.`);
     const extension = path.extname(absolute).toLowerCase(); const mime = ({ '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.avif': 'image/avif', '.gif': 'image/gif', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime' } as Record<string, string>)[extension]; if (!mime) throw new Error(`${path.basename(absolute)} is not a supported image or video. Supported formats: PNG, JPEG, WebP, AVIF, GIF, MP4, WebM, and MOV.`);
     return { _studioFile: true, name: path.basename(absolute), type: mime, base64: (await readFile(absolute)).toString('base64') };
   })) : undefined;
-  return jsonResult(await callEditor('interact_ui', { kind, target, value, path: destination, exact, index, files }));
+  return jsonResult(await callEditor('interact_ui', { kind, target, value, path: destination, exact, index, files, modifiers }));
 });
+
+server.registerTool('list_templates', {
+  title: 'List saved editor templates', description: 'List reusable templates saved in the connected browser, including template IDs and whether a visual preview is available. Call this before applying or deleting a saved template.', inputSchema: {},
+}, async () => jsonResult(await callEditor('list_templates')));
+
+server.registerTool('save_template', {
+  title: 'Save current project as template', description: 'Save the current editor composition as a reusable local template with a preview image. This does not replace or rename the current project.', inputSchema: { name: z.string().trim().min(1).max(80) },
+}, async ({ name }) => jsonResult(await callEditor('save_template', { name })));
+
+server.registerTool('apply_template', {
+  title: 'Apply a saved editor template', description: 'Apply a previously saved template to the current project. Call list_templates first to choose a template ID. This replaces the current project composition while keeping the project identity.', inputSchema: { templateId: z.string().min(1).max(128) },
+}, async ({ templateId }) => jsonResult(await callEditor('apply_template', { templateId })));
+
+server.registerTool('delete_template', {
+  title: 'Delete a saved editor template', description: 'Permanently delete a local saved template. Call list_templates first and set confirmDestructive:true.', inputSchema: { templateId: z.string().min(1).max(128), confirmDestructive: z.boolean().default(false) },
+}, async ({ templateId, confirmDestructive }) => jsonResult(await callEditor('delete_template', { templateId, confirmDestructive })));
+
+server.registerTool('select_assets', {
+  title: 'Select canvas media assets', description: 'Select one or more imported image/video overlays by ID from inspect_project. Set mainImageSelected:true with overlayIds:[] to select the main uploaded image.', inputSchema: { overlayIds: z.array(z.string().min(1)).max(100).default([]), mainImageSelected: z.boolean().default(false) },
+}, async ({ overlayIds, mainImageSelected }) => jsonResult(await callEditor('select_assets', { overlayIds, mainImageSelected })));
+
+server.registerTool('add_media_files', {
+  title: 'Add image or video layers', description: 'Add 1–20 local images or videos as canvas layers. Each file is limited to 32 MB. Images and videos are kept as local browser media.', inputSchema: { filePaths: z.array(z.string().min(1)).min(1).max(20) },
+}, async ({ filePaths }) => {
+  const files = await Promise.all(filePaths.map(filePath => readStudioFile(filePath, studioMediaTypes)));
+  return jsonResult(await callEditor('add_media_files', { files }));
+});
+
+server.registerTool('replace_media_asset', {
+  title: 'Replace image or video layer media', description: 'Replace the source of an existing imported image/video layer by its overlay ID. The layer’s placement, design effects, timeline range, and animation target stay attached to the layer. Either image-to-video or video-to-image replacement is supported.', inputSchema: { assetId: z.string().min(1).max(128), filePath: z.string().min(1) },
+}, async ({ assetId, filePath }) => {
+  const file = await readStudioFile(filePath, studioMediaTypes);
+  return jsonResult(await callEditor('replace_media_asset', { assetId, file }));
+});
+
+server.registerTool('edit_media_timeline', {
+  title: 'Edit image/video timeline clip', description: 'Move, trim, fit, or split a media clip, or change video playback speed. Trimming uses the current playhead; set-range is for still images and set-speed is for videos. Call inspect_project first for IDs and current playhead.', inputSchema: { assetId: z.string().min(1).max(128), mode: z.enum(['move', 'trim-left', 'trim-right', 'fit', 'split', 'set-range', 'set-speed']), startTimeMs: z.number().min(0).optional(), durationMs: z.number().positive().optional(), speed: z.number().min(0.1).max(16).optional(), fitMode: z.enum(['trim', 'speed']).optional() },
+}, async ({ assetId, mode, startTimeMs, durationMs, speed, fitMode }) => jsonResult(await callEditor('edit_media_timeline', { assetId, mode, startTimeMs, durationMs, speed, fitMode })));
+
+server.registerTool('history', {
+  title: 'Undo or redo editor changes', description: 'Undo or redo the most recent editor change in the active project.', inputSchema: { direction: z.enum(['undo', 'redo']) },
+}, async ({ direction }) => jsonResult(await callEditor('history', { direction })));
 
 server.registerTool('list_capabilities', {
   title: 'List editor capabilities', description: 'Discover every supported live-store action, its category and parameter contract, transform properties, easing curves, animation templates, and mask shapes. Use this before authoring a workflow; the app supports detailed custom compositions, not only presets.', inputSchema: {},

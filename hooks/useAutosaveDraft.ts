@@ -16,17 +16,23 @@ import {
   deleteEditorProject,
   getActiveEditorProjectId,
   getEditorProject,
+  getEditorTemplate,
   getStorageErrorMessage,
   listEditorProjects,
   renameEditorProject,
+  saveEditorTemplate,
   saveEditorProject,
   setActiveEditorProjectId,
   type EditorProject,
   type EditorProjectSummary,
+  type EditorTemplateSummary,
   type ProjectSnapshot,
 } from "@/lib/editor-projects/storage";
 import { registerEditorProjectRuntime, useEditorProjectSession } from "@/lib/editor-projects/session";
 import { blobUrlToBase64, deleteDraft, getDraft, migrateFromLocalStorage, type PersistedImageState } from "@/lib/draft-storage";
+import { useMotionSelection } from "@/lib/animation/editor";
+import { exportSlideFrameAsCanvas } from "@/lib/export-slideFrame";
+import { getAspectRatioPreset } from "@/lib/aspect-ratio-utils";
 
 const AUTOSAVE_DELAY = 900;
 const IDLE_SESSION_STATE = {
@@ -127,9 +133,11 @@ async function prepareSnapshot(snapshot: ProjectSnapshot): Promise<ProjectSnapsh
     }
     return { ...mockup, screen: { ...screen, src } };
   }));
-  const imageOverlays = await Promise.all(imageState.imageOverlays.map(async (overlay) => (
-    overlay.isCustom ? { ...overlay, src: await toPersistableSrc(overlay.src) } : overlay
-  )));
+  const imageOverlays = await Promise.all(imageState.imageOverlays.map(async (overlay) => ({
+    ...overlay,
+    src: overlay.isCustom || overlay.src.startsWith("blob:") ? await toPersistableSrc(overlay.src) : overlay.src,
+    ...(overlay.poster?.startsWith("blob:") ? { poster: await toPersistableSrc(overlay.poster) } : {}),
+  })));
   const slides = await Promise.all(imageState.slides.map(async (slide) => ({ ...slide, src: await toPersistableSrc(slide.src) })));
   const backgroundConfig = { ...imageState.backgroundConfig };
   if (backgroundConfig.type === "image" && typeof backgroundConfig.value === "string") {
@@ -164,6 +172,13 @@ function restoreProjectState(project: EditorProject): void {
 
     const img = project.imageState;
     const { timeline, browserUrl, mockups, deviceLayoutSnapshot, deviceScreenAssets, editorMode, ...rest } = img;
+    // 10px was the old implicit default for both asset and canvas corners. New
+    // projects start square; keep intentional non-default values from saved work.
+    const restoredImageState = Object.fromEntries(Object.entries(rest).filter(([, value]) => value !== undefined)) as Partial<OmitFunctions<ImageState>>;
+    restoredImageState.mainImageStartTime = img.mainImageStartTime ?? 0;
+    restoredImageState.mainImageDuration = img.mainImageDuration ?? img.timeline.duration;
+    if (img.borderRadius === 10) restoredImageState.borderRadius = 0;
+    if (img.backgroundBorderRadius === 10) restoredImageState.backgroundBorderRadius = 0;
     const normalize = (draftMockups: typeof mockups) => normalizeDraftMockups(draftMockups, {
       uploadedImageUrl: img.uploadedImageUrl ?? null,
       imageName: img.imageName ?? null,
@@ -172,7 +187,7 @@ function restoreProjectState(project: EditorProject): void {
     });
     const normalized = normalize(mockups);
     useImageStore.setState({
-      ...(Object.fromEntries(Object.entries(rest).filter(([, value]) => value !== undefined)) as Partial<OmitFunctions<ImageState>>),
+      ...restoredImageState,
       mockups: normalized.mockups,
       ...(editorMode !== undefined || normalized.migratedLegacyMockups
         ? { editorMode: resolveRestoredEditorMode(editorMode, normalized.migratedLegacyMockups) }
@@ -268,6 +283,49 @@ export function useAutosaveDraft() {
     await saveQueueRef.current;
   }, [enqueueSave]);
 
+  const saveTemplate = useCallback(async (name: string): Promise<EditorTemplateSummary> => {
+    await flush();
+    const snapshot = await prepareSnapshot(captureCurrentSnapshot());
+    let previewImage: string | undefined;
+    try {
+      const aspectRatio = getAspectRatioPreset(snapshot.imageState.selectedAspectRatio);
+      const { width, height } = aspectRatio ?? { width: 1920, height: 1080 };
+      const previewWidth = 480;
+      const previewHeight = Math.max(1, Math.round(previewWidth * height / width));
+      const canvas = await exportSlideFrameAsCanvas({ width: previewWidth, height: previewHeight });
+      previewImage = canvas.toDataURL("image/jpeg", 0.82);
+    } catch (error) {
+      console.warn("Could not capture saved template preview", error);
+    }
+    return saveEditorTemplate(name, snapshot, previewImage);
+  }, [flush]);
+
+  const applyTemplate = useCallback(async (id: string): Promise<EditorProjectSummary> => {
+    await flush();
+    const template = await getEditorTemplate(id);
+    if (!template) throw new Error("Template not found.");
+    const current = projectRef.current;
+    if (!current) throw new Error("No project is open.");
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = null;
+    generationRef.current += 1;
+    const applied = { ...template, id: current.id, name: current.name, createdAt: current.createdAt, updatedAt: Date.now() };
+    projectRef.current = applied;
+    restoreProjectState(applied);
+    useMotionSelection.getState().selectVideo(null);
+    useMotionSelection.getState().selectClip(null);
+    useMotionSelection.getState().selectKeyframe(null);
+    useMotionSelection.getState().discardPose();
+    const result = await saveEditorProject(applied);
+    if (!result.ok) throw new Error(await getStorageErrorMessage(result.reason));
+    lastSnapshotRef.current = fingerprint(captureCurrentSnapshot());
+    dirtyRef.current = false;
+    useEditorProjectSession.getState().setLastSaved(applied.updatedAt);
+    useEditorProjectSession.getState().setError(null);
+    await syncProjectList();
+    return { id: applied.id, name: applied.name, createdAt: applied.createdAt, updatedAt: applied.updatedAt };
+  }, [flush, syncProjectList]);
+
   const openProject = useCallback(async (id: string): Promise<EditorProjectSummary> => {
     const current = projectRef.current;
     if (current?.id === id) return summarize(current);
@@ -278,8 +336,11 @@ export function useAutosaveDraft() {
     generationRef.current += 1;
     projectRef.current = next;
     restoreProjectState(next);
-    lastSnapshotRef.current = fingerprint({ editorState: next.editorState, imageState: next.imageState });
+    // Publish the new identity in the same turn as the restored document.
+    // Canvas layout uses this boundary to rebase from this project's saved
+    // dimensions instead of the dimensions of the project just closed.
     useEditorProjectSession.getState().setActiveProject(id);
+    lastSnapshotRef.current = fingerprint({ editorState: next.editorState, imageState: next.imageState });
     useEditorProjectSession.getState().setLastSaved(next.updatedAt);
     useEditorProjectSession.getState().setError(null);
     await syncProjectList();
@@ -296,8 +357,8 @@ export function useAutosaveDraft() {
     generationRef.current += 1;
     projectRef.current = project;
     restoreProjectState(project);
-    lastSnapshotRef.current = fingerprint(blank);
     useEditorProjectSession.getState().setActiveProject(project.id);
+    lastSnapshotRef.current = fingerprint(blank);
     useEditorProjectSession.getState().setLastSaved(project.updatedAt);
     useEditorProjectSession.getState().setError(null);
     await syncProjectList();
@@ -358,11 +419,11 @@ export function useAutosaveDraft() {
         generationRef.current += 1;
         projectRef.current = active;
         restoreProjectState(active);
+        useEditorProjectSession.getState().setActiveProject(active.id);
         lastSnapshotRef.current = fingerprint({ editorState: active.editorState, imageState: active.imageState });
         const refreshed = await listEditorProjects();
         const state = useEditorProjectSession.getState();
         state.setProjects(refreshed.length ? refreshed : [summarize(active)]);
-        state.setActiveProject(active.id);
         state.setLastSaved(active.updatedAt);
         hasLoadedRef.current = true;
       } catch (error) {
@@ -376,9 +437,9 @@ export function useAutosaveDraft() {
   }, []);
 
   useEffect(() => {
-    registerEditorProjectRuntime({ createProject, openProject, renameProject, deleteProject, flush });
+    registerEditorProjectRuntime({ createProject, openProject, renameProject, deleteProject, saveTemplate, applyTemplate, flush });
     return () => registerEditorProjectRuntime(null);
-  }, [createProject, deleteProject, flush, openProject, renameProject]);
+  }, [createProject, deleteProject, flush, openProject, renameProject, saveTemplate, applyTemplate]);
 
   useEffect(() => {
     if (!hasLoadedRef.current || !projectRef.current) return;

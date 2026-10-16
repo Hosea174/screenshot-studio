@@ -527,3 +527,31 @@
   margin: 0;
   -webkit-appearance: none;
 }
+
+.image-hsl-range {
+  height: 8px;
+  appearance: none;
+  border-radius: 999px;
+  cursor: pointer;
+  outline: none;
+}
+.image-hsl-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid white;
+  border-radius: 50%;
+  background: #171717;
+  box-shadow: 0 1px 4px #0008;
+}
+.image-hsl-range::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  border: 2px solid white;
+  border-radius: 50%;
+  background: #171717;
+  box-shadow: 0 1px 4px #0008;
+}
+.image-hsl-range:focus-visible {
+  box-shadow: 0 0 0 2px hsl(var(--ring));
+}

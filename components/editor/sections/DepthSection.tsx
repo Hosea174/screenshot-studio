@@ -86,6 +86,8 @@ export function DepthSection() {
     annotations,
     blurRegions,
     selectedOverlayId,
+    selectedOverlayIds,
+    setSelectedOverlayIds,
     setSelectedOverlayId,
     setIsMainImageSelected,
     addImageOverlay,
@@ -274,6 +276,12 @@ export function DepthSection() {
           ) : undefined
         }
       >
+        {selectedOverlayIds.length > 1 && (
+          <div className="mb-2 flex items-center justify-between rounded-md border border-primary/20 bg-primary/5 px-2.5 py-2 text-xs">
+            <span>{selectedOverlayIds.length} assets selected · style and border effects apply to all</span>
+            <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => setSelectedOverlayIds([])}>Clear</button>
+          </div>
+        )}
         {layers.length === 0 && !uploadedImageUrl ? (
           <div className="flex flex-col items-center gap-2 py-6 text-center">
             <LayersLogoIcon size={28} className="text-muted-foreground/50" />
@@ -284,7 +292,7 @@ export function DepthSection() {
         ) : (
           <div className="space-y-0.5">
             {[...layers].reverse().map((layer) => {
-              const isSelected = selectedLayerId === layer.id;
+              const isSelected = selectedLayerId === layer.id || (layer.type === 'image-overlay' && selectedOverlayIds.includes(layer.id));
               const isImageOverlay = layer.type === 'image-overlay';
 
               return (

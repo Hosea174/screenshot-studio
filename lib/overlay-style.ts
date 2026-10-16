@@ -14,7 +14,7 @@ export const DEFAULT_OVERLAY_SHADOW: ImageShadow = {
   offsetY: 8,
   spread: 3,
   color: "rgba(0, 0, 0, 0.6)",
-  opacity: 0.5,
+  opacity: 0.25,
 };
 
 export function hasOverlayTilt(tilt: ImageOverlayTilt | undefined): tilt is ImageOverlayTilt {

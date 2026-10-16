@@ -258,6 +258,7 @@ export function CleanUploadState() {
     <div
       ref={containerRef}
       {...getRootProps()}
+      data-local-dropzone=""
       tabIndex={0}
       className="relative w-full h-full flex items-center justify-center outline-none overflow-hidden"
     >

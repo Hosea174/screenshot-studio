@@ -53,6 +53,9 @@ export const EASE_LABELS: Record<EasingPreset, string> = {
 };
 
 interface MotionSelection {
+  mediaId: string | null;
+  selectMedia: (id: string | null) => void;
+  /** Backwards-compatible alias for older saved editor code. */
   videoId: string | null;
   selectVideo: (id: string | null) => void;
   clipId: string | null;
@@ -64,12 +67,13 @@ interface MotionSelection {
   selectKeyframe: (keyframe: MotionSelection['keyframe']) => void;
 }
 export const useMotionSelection = create<MotionSelection>((set) => ({
-  clipId: null, keyframe: null, draft: null, videoId: null,
-  selectVideo: (videoId) => set({ videoId, clipId: null, keyframe: null, draft: null }),
+  clipId: null, keyframe: null, draft: null, mediaId: null, videoId: null,
+  selectMedia: (mediaId) => set({ mediaId, videoId: mediaId, clipId: null, keyframe: null, draft: null }),
+  selectVideo: (videoId) => set({ mediaId: videoId, videoId, clipId: null, keyframe: null, draft: null }),
   stagePose: (clipId, time, properties) => set(s => ({ draft: { clipId, time, properties: { ...(s.draft?.clipId === clipId && s.draft.time === time ? s.draft.properties : {}), ...properties } } })),
   discardPose: () => set({ draft: null }),
-  selectClip: (clipId) => set(s => ({ clipId, videoId: null, keyframe: null, draft: s.clipId === clipId ? s.draft : null })),
-  selectKeyframe: (keyframe) => set(keyframe ? { keyframe, videoId: null } : { keyframe }),
+  selectClip: (clipId) => set(s => ({ clipId, mediaId: null, videoId: null, keyframe: null, draft: s.clipId === clipId ? s.draft : null })),
+  selectKeyframe: (keyframe) => set(keyframe ? { keyframe, mediaId: null, videoId: null } : { keyframe }),
 }));
 
 export const useMotionLibrary = create(persist<{

@@ -1,19 +1,21 @@
 'use client';
 
-import { useCallback, useMemo, useState, useRef, useEffect, useLayoutEffect } from 'react';
+import { useCallback, useMemo, useState, useRef, useEffect, useLayoutEffect, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { beginMotionDrag } from '@/lib/animation/drag-history';
 import { useMotionSelection } from '@/lib/animation/editor';
 import { editingClip, hasAnimatedPropertyAtTime, motionPose, previewPose, selectMotionTarget } from '@/lib/animation/authoring';
 import { ShadowDefinition } from './ShadowDefinition';
 import { VideoLayerMedia } from './VideoLayerMedia';
-import { videoVisibleAt } from '@/lib/export/video-timing';
+import { mediaVisibleAt } from '@/lib/export/video-timing';
 import Moveable from 'react-moveable';
 import { useImageStore, type ImageFilters, type ImageBorder } from '@/lib/store';
 import { getClipInterpolatedProperties } from '@/lib/animation/interpolation';
 import { DEFAULT_ANIMATABLE_PROPERTIES } from '@/types/animation';
 import type { ImageOverlay } from '@/lib/store';
-import { cn } from '@/lib/utils';
+import { replaceOverlayMedia } from '@/lib/video-layers';
+import { toast } from 'sonner';
+import { Maximize2, Replace } from 'lucide-react';
 import {
   buildOverlayShadowFilter,
   buildOverlayTiltTransform,
@@ -30,13 +32,6 @@ const NEUTRAL_IMAGE_FILTERS: ImageFilters = {
   saturate: 100,
   sepia: 0,
 };
-import {
-  Delete02Icon,
-  Copy01Icon,
-  LayerSendToBackIcon,
-  LayerBringToFrontIcon,
-} from 'hugeicons-react';
-
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface HTMLImageOverlayLayerProps {
@@ -47,8 +42,6 @@ interface HTMLImageOverlayLayerProps {
   setIsMainImageSelected: (selected: boolean) => void;
   setSelectedTextId: (id: string | null) => void;
   updateImageOverlay: (id: string, updates: Partial<ImageOverlay>) => void;
-  onDuplicate?: (id: string) => void;
-  onDelete?: (id: string) => void;
   canvasW: number;
   canvasH: number;
   onDragStateChange?: (dragging: boolean) => void;
@@ -68,12 +61,13 @@ function OverlayElement({
 }: {
   overlay: ImageOverlay;
   overlayImg: HTMLImageElement;
-  onSelect: () => void;
+  onSelect: (event: ReactPointerEvent) => void;
   elRef?: (el: HTMLDivElement | null) => void;
 }) {
   const timeline = useImageStore(s => s.timeline);
   const clips = useImageStore(s => s.animationClips);
   const imageFilters = useImageStore(s => s.imageFilters);
+  const selectedOverlayIds = useImageStore(s => s.selectedOverlayIds);
   const imageBorder = useImageStore(s => s.imageBorder);
   const borderRadius = useImageStore(s => s.borderRadius);
   const imageOpacity = useImageStore(s => s.imageOpacity);
@@ -105,7 +99,7 @@ function OverlayElement({
         style={{
           position: 'absolute',
           inset: 0,
-          opacity: overlay.opacity * motion.imageOpacity * (overlay.mediaType === 'video' && !videoVisibleAt(overlay, timeline.playhead) ? 0 : 1),
+          opacity: overlay.opacity * motion.imageOpacity * (mediaVisibleAt(overlay, timeline.playhead, timeline.duration) ? 1 : 0),
           userSelect: 'none',
           zIndex: 5,
           pointerEvents: 'none',
@@ -132,7 +126,16 @@ function OverlayElement({
   const frame = overlay.frame ?? (isPrimaryOverlay ? imageBorder : undefined);
   const hasFrame = Boolean(frame?.enabled && frame.type !== 'none');
   const padding = hasFrame ? Math.max(0, Math.round(frameWidth * (frame?.padding ?? 0) / 100)) : 0;
-  const imageFilter = buildOverlayImageFilter(isPrimaryOverlay ? imageFilters : NEUTRAL_IMAGE_FILTERS, overlay.shadow, overlay.id);
+  const imageFilter = buildOverlayImageFilter(isPrimaryOverlay ? imageFilters : NEUTRAL_IMAGE_FILTERS, overlay.hsl);
+  const shadowFilter = overlay.shadow?.enabled
+    ? (overlay.shadow.spread ?? 0) > 0
+      ? `url(#shadow-${overlay.id})`
+      : buildOverlayShadowFilter(overlay.shadow)
+    : undefined;
+  const outerFilter = [
+    shadowFilter,
+    (overlay.blur ?? 0) > 0 ? `blur(${overlay.blur}px)` : undefined,
+  ].filter(Boolean).join(' ');
   const frameBackground = frame ? overlayFrameBackground(frame) : 'transparent';
   const radius = overlay.radius ?? (isPrimaryOverlay ? borderRadius : 0);
   const frameRadius = radius + padding;
@@ -143,7 +146,7 @@ function OverlayElement({
       data-overlay-id={overlay.id}
       onPointerDown={(e) => {
         e.stopPropagation();
-        onSelect();
+        onSelect(e);
       }}
       style={{
         position: 'absolute',
@@ -156,12 +159,14 @@ function OverlayElement({
         justifyContent: 'center',
         transform: `perspective(${effectivePerspective}px) translate(${motion.translateX + (isPrimaryOverlay ? perspective3D.translateX : 0)}%, ${motion.translateY + (isPrimaryOverlay ? perspective3D.translateY : 0)}%) rotateX(${motion.rotateX + (isPrimaryOverlay ? perspective3D.rotateX : 0)}deg) rotateY(${motion.rotateY + (isPrimaryOverlay ? perspective3D.rotateY : 0)}deg) rotate(${overlay.rotation + motion.rotateZ + (isPrimaryOverlay ? perspective3D.rotateZ : 0)}deg) scale(${motion.scale * (overlay.scale ?? (isPrimaryOverlay ? perspective3D.scale : 1))})`,
         perspective: `${hasAnimatedPerspective ? motion.perspective : overlay.tilt?.perspective ?? DEFAULT_ANIMATABLE_PROPERTIES.perspective}px`,
-        opacity: overlay.opacity * motion.imageOpacity * (isPrimaryOverlay ? imageOpacity : 1) * (overlay.mediaType === 'video' && !videoVisibleAt(overlay, timeline.playhead) ? 0 : 1),
-        visibility: overlay.mediaType === 'video' && !videoVisibleAt(overlay, timeline.playhead) ? 'hidden' : undefined,
-        filter: (overlay.blur ?? 0) > 0 ? `blur(${overlay.blur}px)` : undefined,
+        opacity: overlay.opacity * motion.imageOpacity * (isPrimaryOverlay ? imageOpacity : 1) * (mediaVisibleAt(overlay, timeline.playhead, timeline.duration) ? 1 : 0),
+        visibility: !mediaVisibleAt(overlay, timeline.playhead, timeline.duration) ? 'hidden' : undefined,
+        filter: outerFilter || undefined,
         cursor: 'grab',
         userSelect: 'none',
         pointerEvents: 'auto',
+        outline: selectedOverlayIds.length > 1 && selectedOverlayIds.includes(overlay.id) ? '2px solid rgb(59 130 246)' : undefined,
+        outlineOffset: '2px',
       }}
     >
       {overlay.shadow?.enabled && <ShadowDefinition id={`shadow-${overlay.id}`} shadow={overlay.shadow} />}
@@ -188,7 +193,7 @@ function OverlayElement({
   );
 }
 
-function buildOverlayImageFilter(filters: ImageFilters, shadow: ImageOverlay['shadow'], id: string): string | undefined {
+function buildOverlayImageFilter(filters: ImageFilters, hsl?: ImageOverlay['hsl']): string | undefined {
   const values: string[] = [];
   if (filters.brightness !== 100) values.push(`brightness(${filters.brightness / 100})`);
   if (filters.contrast !== 100) values.push(`contrast(${filters.contrast / 100})`);
@@ -198,10 +203,8 @@ function buildOverlayImageFilter(filters: ImageFilters, shadow: ImageOverlay['sh
   if (filters.hueRotate !== 0) values.push(`hue-rotate(${filters.hueRotate}deg)`);
   if (filters.blur > 0) values.push(`blur(${filters.blur}px)`);
   if (filters.invert > 0) values.push(`invert(${filters.invert / 100})`);
-  if (shadow?.enabled && (shadow.spread ?? 0) > 0) values.push(`url(#shadow-${id})`);
-  else {
-    const shadowFilter = buildOverlayShadowFilter(shadow);
-    if (shadowFilter) values.push(shadowFilter);
+  if (hsl && (hsl.hue !== 0 || hsl.saturation !== 100 || hsl.lightness !== 100)) {
+    values.push(`hue-rotate(${hsl.hue}deg)`, `saturate(${hsl.saturation / 100})`, `brightness(${hsl.lightness / 100})`);
   }
   return values.length ? values.join(' ') : undefined;
 }
@@ -215,74 +218,6 @@ function overlayFrameBackground(frame: ImageBorder): string {
   return 'transparent';
 }
 
-// ── Context toolbar (minimal, bottom-anchored) ──────────────────────────────
-
-function ContextToolbar({
-  overlay,
-  onUpdate,
-  onDuplicate,
-  onDelete,
-}: {
-  overlay: ImageOverlay;
-  onUpdate: (updates: Partial<ImageOverlay>) => void;
-  onDuplicate: () => void;
-  onDelete: () => void;
-}) {
-  const isFront = (overlay.layer || 'front') === 'front';
-
-  return (
-    <div
-      className={cn(
-        'absolute left-1/2 -translate-x-1/2 bottom-0 translate-y-[calc(100%+8px)]',
-        'z-[999] flex h-8 items-center gap-0.5 rounded-md px-1',
-        'bg-card border border-foreground/10',
-        'shadow-lg',
-        'animate-in fade-in-0 zoom-in-95 duration-100'
-      )}
-      style={{ pointerEvents: 'auto' }}
-      onPointerDown={(e) => e.stopPropagation()}
-    >
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onUpdate({ layer: isFront ? 'back' : 'front' });
-        }}
-        className={cn(
-          'flex h-7 w-7 cursor-pointer items-center justify-center rounded-md transition-colors duration-150',
-          'text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground'
-        )}
-        title={isFront ? 'Send behind image' : 'Bring to front'}
-      >
-        {isFront ? <LayerSendToBackIcon size={14} /> : <LayerBringToFrontIcon size={14} />}
-      </button>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onDuplicate();
-        }}
-        className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-foreground/[0.06] hover:text-foreground"
-        title="Duplicate"
-      >
-        <Copy01Icon size={14} />
-      </button>
-      <div className="mx-0.5 h-3.5 w-px bg-foreground/10" aria-hidden />
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onDelete();
-        }}
-        className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-destructive/15 hover:text-destructive"
-        title="Delete"
-      >
-        <Delete02Icon size={14} />
-      </button>
-    </div>
-  );
-}
-
 // ── Main layer component ─────────────────────────────────────────────────────
 
 export function HTMLImageOverlayLayer({
@@ -293,8 +228,6 @@ export function HTMLImageOverlayLayer({
   setIsMainImageSelected,
   setSelectedTextId,
   updateImageOverlay,
-  onDuplicate,
-  onDelete,
   canvasW,
   canvasH,
   onDragStateChange,
@@ -303,7 +236,8 @@ export function HTMLImageOverlayLayer({
 }: HTMLImageOverlayLayerProps) {
   const [selectedEl, setSelectedEl] = useState<HTMLDivElement | null>(null);
   const [interacting, setInteracting] = useState(false);
-  const [recoveryAnchor, setRecoveryAnchor] = useState<{ left: number; top: number } | null>(null);
+  const [toolbarAnchor, setToolbarAnchor] = useState<{ left: number; top: number } | null>(null);
+  const replaceInputRef = useRef<HTMLInputElement>(null);
   const moveableRef = useRef<Moveable | null>(null);
   const draft = useMotionSelection(s => s.draft);
   const playhead = useImageStore(s => s.timeline.playhead);
@@ -339,9 +273,20 @@ export function HTMLImageOverlayLayer({
   };
 
   const handleSelect = useCallback(
-    (id: string) => {
+    (id: string, event?: ReactPointerEvent) => {
+      if (event?.ctrlKey || event?.metaKey) {
+        const current = useImageStore.getState().selectedOverlayIds;
+        const next = current.includes(id) ? current.filter(selected => selected !== id) : [...current, id];
+        useImageStore.getState().setSelectedOverlayIds(next);
+        setSelectedOverlayId(next.at(-1) ?? null);
+        selectMotionTarget(next.at(-1) ?? 'asset');
+        setIsMainImageSelected(false);
+        setSelectedTextId(null);
+        return;
+      }
       selectMotionTarget(id);
       setSelectedOverlayId(id);
+      useImageStore.getState().setSelectedOverlayIds([id]);
       setIsMainImageSelected(false);
       setSelectedTextId(null);
     },
@@ -366,13 +311,9 @@ export function HTMLImageOverlayLayer({
     // its rect in response to those same mutations can cancel or jump the drag.
     if (interacting) return;
     moveableRef.current?.updateRect();
-    const rect = selectedEl?.getBoundingClientRect();
-    const viewport = selectedEl?.closest('[data-canvas-viewport]')?.getBoundingClientRect();
-    const anchor = rect && viewport && (
-      rect.left < viewport.left || rect.top < viewport.top ||
-      rect.right > viewport.right || rect.bottom > viewport.bottom
-    ) ? { left: viewport.right - 110, top: viewport.top + 12 } : null;
-    setRecoveryAnchor(old => old?.left === anchor?.left && old?.top === anchor?.top ? old : anchor);
+    const canvas = selectedEl?.closest('[data-html-canvas]')?.getBoundingClientRect();
+    const nextToolbarAnchor = canvas ? { left: canvas.left + 12, top: canvas.top + 12 } : null;
+    setToolbarAnchor(old => old?.left === nextToolbarAnchor?.left && old?.top === nextToolbarAnchor?.top ? old : nextToolbarAnchor);
   }, [interacting, selectedEl]);
 
   useLayoutEffect(() => {
@@ -382,12 +323,12 @@ export function HTMLImageOverlayLayer({
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(updateSelectedControls);
     };
-    const viewport = selectedEl?.closest('[data-canvas-viewport]');
+    const canvas = selectedEl?.closest('[data-html-canvas]');
     const mutationObserver = selectedEl ? new MutationObserver(scheduleUpdate) : null;
     if (selectedEl) mutationObserver?.observe(selectedEl, { attributes: true, attributeFilter: ['style'] });
     const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(scheduleUpdate) : null;
     if (selectedEl) resizeObserver?.observe(selectedEl);
-    if (viewport) resizeObserver?.observe(viewport);
+    if (canvas) resizeObserver?.observe(canvas);
     window.addEventListener('resize', scheduleUpdate);
     window.addEventListener('scroll', scheduleUpdate, true);
     return () => {
@@ -436,7 +377,7 @@ export function HTMLImageOverlayLayer({
             key={overlay.id}
             overlay={overlay}
             overlayImg={overlayImg}
-            onSelect={() => handleSelect(overlay.id)}
+            onSelect={(event) => handleSelect(overlay.id, event)}
             elRef={overlay.id === selectedOverlayId ? setSelectedEl : undefined}
           />
         );
@@ -521,36 +462,48 @@ export function HTMLImageOverlayLayer({
             }}
           />, document.body)}
 
-          {recoveryAnchor && createPortal(<button type="button" data-resize-handle="true" aria-label="Fit selected layer to canvas" className="rounded-md border border-border bg-background px-3 py-2 text-xs text-foreground shadow" style={{ position: 'fixed', ...recoveryAnchor, zIndex: 3001 }} onClick={() => {
-            const finish = beginMotionDrag();
-            const rect = selectedEl.getBoundingClientRect();
-            const factor = Math.min(canvasW / rect.width, canvasH / rect.height) * 0.8;
-            const clip = editingClip(selectedOverlay.id);
-            if (clip) previewPose(selectedOverlay.id, { scale: Math.max(0.05, motionPose(clip).scale * factor), translateX: (canvasW / 2 - selectedOverlay.position.x) / frameWidth * 100, translateY: (canvasH / 2 - selectedOverlay.position.y) / frameHeight * 100 });
-            else updateImageOverlay(selectedOverlay.id, { size: selectedOverlay.size * factor, position: { x: canvasW / 2, y: canvasH / 2 } });
-            finish();
-          }}>Fit layer</button>, document.body)}
-
-          {!interacting && (
-            <div
-              data-export-exclude="true"
-              style={{
-                position: 'absolute',
-                left: `${selectedOverlay.position.x - frameWidth / 2}px`,
-                top: `${selectedOverlay.position.y - frameHeight / 2}px`,
-                width: `${frameWidth}px`,
-                height: `${frameHeight}px`,
-                pointerEvents: 'none',
-              }}
-            >
-              <ContextToolbar
-                overlay={selectedOverlay}
-                onUpdate={(updates) => updateImageOverlay(selectedOverlay.id, updates)}
-                onDuplicate={() => onDuplicate?.(selectedOverlay.id)}
-                onDelete={() => onDelete?.(selectedOverlay.id)}
+          {toolbarAnchor && createPortal(
+            <div data-resize-handle="true" className="flex items-center gap-1.5 rounded-lg border border-border bg-background/95 p-1 shadow-lg backdrop-blur" style={{ position: 'fixed', ...toolbarAnchor, zIndex: 3001 }}>
+              <input
+                ref={replaceInputRef}
+                type="file"
+                accept="image/*,video/*,.m4v,.mov"
+                className="hidden"
+                onChange={async event => {
+                  const file = event.target.files?.[0];
+                  if (file) {
+                    try { await replaceOverlayMedia(selectedOverlay.id, file); }
+                    catch (error) { toast.error(error instanceof Error ? error.message : 'Could not replace media'); }
+                  }
+                  event.target.value = '';
+                }}
               />
-            </div>
+              <button type="button" aria-label="Replace selected asset" title="Replace selected asset" className="flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); replaceInputRef.current?.click(); }}>
+                <Replace size={15} />
+              </button>
+              <button type="button" aria-label="Fit selected asset to canvas" title="Fit selected asset to canvas" className="flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" onPointerDown={event => event.stopPropagation()} onClick={event => {
+                event.stopPropagation();
+                const finish = beginMotionDrag();
+                const rect = selectedEl.getBoundingClientRect();
+                const factor = Math.min(canvasW / rect.width, canvasH / rect.height) * 0.8;
+                const clip = editingClip(selectedOverlay.id);
+                if (clip) previewPose(selectedOverlay.id, {
+                  scale: Math.max(0.05, motionPose(clip).scale * factor),
+                  translateX: 0,
+                  translateY: 0,
+                });
+                else updateImageOverlay(selectedOverlay.id, {
+                  size: selectedOverlay.size * factor,
+                  position: { x: canvasW / 2, y: canvasH / 2 },
+                });
+                finish();
+              }}>
+                <Maximize2 size={15} />
+              </button>
+            </div>,
+            document.body
           )}
+
         </>
       )}
     </div>

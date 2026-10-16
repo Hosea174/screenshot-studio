@@ -1,45 +1,54 @@
 ---
 name: screenshot-studio-mcp
-description: Use Screenshot Studio's connected MCP to inspect, design, edit, preview, and export a complete screenshot composition, animation, slideshow, or image-tool result. Use whenever an agent should operate Screenshot Studio through MCP.
+description: Operate every Screenshot Studio editor and image-tool feature through the connected MCP. Inspect, create, edit, animate, template, preview, and export local projects.
 ---
 
 # Screenshot Studio MCP workflow
 
-Use this skill whenever the user asks you to make or change work in Screenshot Studio. The MCP is connected to the live browser session, so its tools operate on the project the user has open.
+Use this skill for any task that changes or inspects Screenshot Studio. The MCP controls the connected local browser session; project media stays in that browser unless an image-tool result is explicitly returned.
 
-## Start with the live project
+## Connect and inspect
 
-1. Call `connection_status`. If there is no connected editor, open Screenshot Studio in the browser and try again.
-2. Call `inspect_project` to read the canvas, active assets, layers, device mockups, background, exports, slideshow, annotations, blur regions, clips, tracks, and keyframes. Original media bytes stay in the user’s browser.
-3. Call `list_capabilities` to discover current actions, their argument counts and categories, design properties, easing curves, animation templates, masks, and standalone image-tool routes. For exact positional argument types, inspect the matching action in `lib/store/index.ts`, `lib/store/device-ui.ts`, or the store named by the capability entry.
-4. For controls that are specific to another page or are not in the store action catalog, call `inspect_ui`, then use `interact_ui`. This covers the same-origin app’s other pages and their accessible buttons, inputs, menus, dialogs, uploads, and tool settings. Use `navigate` to move within this app.
+1. Call `connection_status`. If `ready` is false, open the editor at `/editor` in the in-app browser and retry.
+2. Call `inspect_project` before editing. It returns current project identity, canvas/design state, selected assets, layers, slides, annotations, blur regions, main-image clip range, and animation clips/tracks/keyframes. Media bytes are intentionally omitted; use `hasSource` and `hasPoster` flags.
+3. Call `list_capabilities` for the current store-action signatures, animation properties, easing, presets, templates, masks, and standalone image tools.
+4. Use the named MCP tools below for common operations. For any feature without a named operation, call `inspect_ui`, operate its accessible control with `interact_ui`, then inspect or capture a preview to confirm the change. When a control is inside a collapsed section or dialog, open it and inspect again.
 
-## Work from the brief; don’t stop at a preset
+## Tool selection
 
-Presets and templates are references and useful starting states. They are not a finished answer unless the user explicitly asks to apply one as-is. Inspect the real screenshot, device, text, aspect ratio, and constraints first. Make a composition that fits those elements: choose a deliberate background and contrast, give the subject intentional scale and placement, preserve readable text, and avoid decorative effects that compete with the content.
+### Projects and saved templates
 
-For animation requests, author the actual keyframes. Choose the duration and spacing to fit the action; key every property that materially changes; set meaningful start and end values; choose or design the easing for each segment; and use clip-mask keyframes only when a shaped reveal improves the scene. Prefer a few purposeful beats to generic simultaneous movement. Use presets as a base only when you still tailor their values, timing, targets, and easing to this project. Do not create camera-motion tracks: camera animation was removed from the editor workflow. Animate the intended image, mockup, or overlay layer instead.
+- `list_projects`, `create_project`, `open_project`, `rename_project`, `delete_project` manage local projects. Choose IDs from the list; deleting requires `confirmDestructive:true`.
+- `list_templates`, `save_template`, `apply_template`, `delete_template` manage reusable templates. Applying a template replaces the open project’s composition while keeping its project identity. Deleting requires `confirmDestructive:true`.
 
-For slideshow and video requests, inspect slide order, durations, and animation tracks before export. For image-tool requests, use `process_images` with the matching engine (compress, convert, resize, crop, or rotate); this runs the same local browser processing pipeline as the standalone tool pages.
+### Canvas, assets, and selection
 
-## Editing through the MCP
+- `load_image_file` sets the main image from a local image file. `add_slides_from_files` adds ordered images to a slideshow.
+- `add_media_files` adds one or more image/video canvas layers. `replace_media_asset` swaps an imported image or video layer by its overlay ID; the layer’s effects, position, timing, and animation target remain attached to that layer across image/video swaps.
+- `select_assets` selects overlay IDs, including multiple IDs for batch style/effect operations. Use `mainImageSelected:true` with `overlayIds:[]` to select the main image by itself.
+- Use `apply_editor_action` for structured changes not covered by a dedicated tool. It calls a named store action with positional `args`; get its exact signature from `list_capabilities`. This covers backgrounds, gradients, frames, shadows, HSL/filter values, text, mockups, layer ordering, annotations, blur/mosaic regions, slideshow settings, canvas guides, and most animation/keyframe operations.
+- For features available only through a page’s own controls (including standalone image tools), use `inspect_ui` then `interact_ui`. UI interaction supports click, fill, select, toggle, upload, same-origin navigation, and key presses with `ctrl`, `alt`, `shift`, or `meta` modifiers.
 
-`apply_editor_action` calls named store actions. The `store` is `image`, `editor`, or `device`; `args` is an array of positional arguments. Find the action in `list_capabilities` first, pass the exact number and order of arguments, and verify the returned project state. Destructive clear/remove/reset calls require `confirmDestructive: true` and should match the user’s request.
+### Timeline and animation
 
-Frequently used action signatures:
+- Use `edit_media_timeline` for media clips: `move` and `set-range` use milliseconds, `trim-left` / `trim-right` trim at the current playhead, `fit` fits still images or videos to the timeline, `set-speed` changes a video’s playback rate from 0.1× to 16×, and `split` splits a video at the playhead. A main uploaded image uses asset ID `__main_image__`; overlay IDs come from `inspect_project`.
+- Use `setPlayhead`, `setTimelineDuration`, `addAnimationClip`, `updateAnimationClip`, `addTrack`, `updateTrack`, `addKeyframe`, `updateKeyframe`, and `removeKeyframe` via `apply_editor_action` for direct animation authoring. Keyframe times and clip times are milliseconds. Use the property list from `list_capabilities`; keyframe easing controls the segment into that keyframe.
+- Animation clips are targeted per asset. Set the target overlay ID (or `asset` for the main image) when creating/updating clips. Use `inspect_project` to verify tracks and keyframes stay attached to the intended target.
+- `history` performs undo or redo. The UI equivalent is `interact_ui` with `kind:"press"`, `value:"z"`/`"y"`, and `modifiers:["ctrl"]`.
+- Camera animation is not supported. Animate an image, video, text, or device layer instead.
 
-- Background and canvas: `setBackgroundConfig(config)`, `setBackgroundType(type)`, `setBackgroundValue(value)`, `setBackgroundOpacity(opacity)`, `setBackgroundBlur(blur)`, `setAspectRatio(aspectRatio)`, `setCustomDimensions(width, height)`, `setCanvasDimensions(dimensions)`.
-- Main image: `setImageOpacity(opacity)`, `setImageScale(scale)`, `setImageBorder(border)`, `setImageShadow(shadow)`, `setPerspective3D(perspective)`, `setImageFilter(key, value)`, `setImageStylePreset(preset)`, `setShadowPreset(preset)`.
-- Text and image layers: `addTextOverlay(overlay)`, `updateTextOverlay(id, changes)`, `removeTextOverlay(id)`, `addImageOverlay(overlay)`, `updateImageOverlay(id, changes)`, `removeImageOverlay(id)`, `reorderImageOverlay(id, direction)`.
-- Device mockups: `addMockup(mockup)`, `updateMockup(id, changes)`, `duplicateMockup(id)`, `removeMockup(id)`, `applyDeviceLayout(layoutId)`, `reorderMockup(id, direction)`.
-- Timeline: `addAnimationClip(presetId, startTimeMs, target?)`, `updateAnimationClip(id, changes)`, `addTrack(track)`, `addKeyframe(trackId, keyframe)`, `updateKeyframe(trackId, keyframeId, changes)`, `removeKeyframe(trackId, keyframeId)`, `setTimelineDuration(milliseconds)`, `setPlayhead(milliseconds)`. Keep keyframe times inside their clip and use property names supported by `list_capabilities`. A keyframe includes `time`, `properties`, `easing`, and optional `clipMask`.
-- Masks and easing: clip masks are CSS `clip-path` strings from the mask list or a valid custom shape. Easing is one of the listed named curves or a CSS `cubic-bezier(x1,y1,x2,y2)` curve. Each keyframe’s easing controls the segment that leads into it. Match mask geometry across adjacent keys for interpolation.
-- Markup: `addAnnotation(annotation)`, `updateAnnotation(id, changes)`, `removeAnnotation(id)`, `addBlurRegion(region)`, `updateBlurRegion(id, changes)`, `removeBlurRegion(id)`.
-- Slides: use `add_slides_from_files` to add local files, then `setActiveSlide(id)`, `setSlideshow(changes)`, and `removeSlide(id)` as needed.
-- File import: use `load_image_file` for a single local image. Use `add_slides_from_files` for ordered slideshow inputs. Use `interact_ui`’s `upload` action when the destination is a standalone app tool’s own file control.
+### Image tools and exports
 
-## Preview and deliver
+- `process_images` runs the local browser pipeline for compression, conversion, resizing, cropping, and rotation. It accepts file paths and returns processed image content to the agent. Tool routes and engines are listed in `list_capabilities`.
+- `capture_preview` returns a visual snapshot of the editor canvas. After substantial edits, inspect it and revise issues in crop, scale, alignment, contrast, effects, or timing.
+- `export_image` returns PNG, JPEG, or WebP output. `export_video` renders an animation or slideshow as MP4, WebM, or GIF. Report export success only when the tool confirms it.
 
-After making substantial edits, call `capture_preview`. Inspect the image, compare it with the user’s brief, and correct visible spacing, crop, contrast, alignment, hierarchy, or timing issues. Iterate until the result looks intentional. Use `export_image` for PNG/JPEG/WebP output or `export_video` for animation/slideshow MP4, WebM, or GIF output. Report the format and outcome; don’t claim to have inspected or exported a file unless the tool returned success.
+## Editing conventions
 
-The browser bridge is local to the current app origin. Image files are read locally by the MCP process and sent to the browser editor; the image processing pipeline stays in the browser. No arbitrary code execution tool is provided. Custom clip-mask input is CSS clip-path only.
+Inspect before editing, use structured actions for document state, and use UI controls when the feature is page-specific. Prefer a small sequence of relevant edits over a broad reset. Do not run destructive clear/remove/reset actions unless the user requested that change; MCP enforces `confirmDestructive:true` for those actions.
+
+Treat presets and templates as editable starting points. Tailor background, contrast, scale, placement, animation targets, timing, and easing to the actual assets and brief. Keep text readable and visual effects subordinate to the subject. For multi-asset work, identify each asset by its current ID and verify the resulting state.
+
+## Coverage rule
+
+The MCP surface is intentionally layered: dedicated tools handle common workflows; `apply_editor_action` exposes the editor stores; `inspect_ui` plus `interact_ui` covers accessible page-specific controls; `process_images` exposes the standalone image engines. If a user-visible feature is missing from all four paths, treat it as an MCP coverage bug and add an operation or an accessible UI control bridge instead of telling agents to use an unexposed workflow.

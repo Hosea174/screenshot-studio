@@ -2,8 +2,9 @@ import type { EditorState, OmitFunctions } from "@/lib/store";
 import type { PersistedImageState } from "@/lib/draft-storage";
 
 const DB_NAME = "screenshotstudio-editor-projects";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const PROJECTS = "projects";
+const TEMPLATES = "templates";
 const SETTINGS = "settings";
 const ACTIVE_PROJECT_KEY = "active-project-id";
 
@@ -18,6 +19,14 @@ export interface EditorProject {
 
 export type ProjectSnapshot = Pick<EditorProject, "editorState" | "imageState">;
 export type EditorProjectSummary = Pick<EditorProject, "id" | "name" | "createdAt" | "updatedAt">;
+export interface EditorTemplate extends ProjectSnapshot {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  previewImage?: string;
+}
+export type EditorTemplateSummary = Pick<EditorTemplate, "id" | "name" | "createdAt" | "updatedAt" | "previewImage">;
 export type ProjectSaveResult = { ok: true } | { ok: false; reason: "quota" | "error"; error?: unknown };
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -29,6 +38,7 @@ function openDatabase(): Promise<IDBDatabase> {
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(PROJECTS)) db.createObjectStore(PROJECTS, { keyPath: "id" });
+      if (!db.objectStoreNames.contains(TEMPLATES)) db.createObjectStore(TEMPLATES, { keyPath: "id" });
       if (!db.objectStoreNames.contains(SETTINGS)) db.createObjectStore(SETTINGS, { keyPath: "key" });
     };
     request.onsuccess = () => {
@@ -141,6 +151,72 @@ export async function saveEditorProject(project: EditorProject): Promise<Project
     } catch (error) {
       finish({ ok: false, reason: isQuotaError(error) ? "quota" : "error", error });
     }
+  });
+}
+
+export async function listEditorTemplates(): Promise<EditorTemplateSummary[]> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(TEMPLATES, "readonly");
+    const items: EditorTemplateSummary[] = [];
+    const request = tx.objectStore(TEMPLATES).openCursor();
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) return;
+      const template = cursor.value as EditorTemplate;
+      const { id, name, createdAt, updatedAt } = template;
+      const fallbackPreview = template.editorState.screenshot.src
+        ?? template.imageState.uploadedImageUrl
+        ?? template.imageState.imageOverlays.find(overlay => overlay.isVisible && overlay.poster)?.poster
+        ?? template.imageState.imageOverlays.find(overlay => overlay.isVisible && overlay.mediaType !== "video")?.src
+        ?? template.imageState.imageOverlays.find(overlay => overlay.isVisible)?.src;
+      const preview = template.previewImage ?? fallbackPreview;
+      items.push({ id, name, createdAt, updatedAt, ...(preview ? { previewImage: preview } : {}) });
+      cursor.continue();
+    };
+    request.onerror = () => reject(request.error ?? new Error("Could not load saved templates."));
+    tx.oncomplete = () => resolve(items.sort((a, b) => b.updatedAt - a.updatedAt));
+    tx.onerror = tx.onabort = () => reject(tx.error ?? new Error("Could not load saved templates."));
+  });
+}
+
+export async function getEditorTemplate(id: string): Promise<EditorTemplate | null> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(TEMPLATES, "readonly").objectStore(TEMPLATES).get(id);
+    request.onsuccess = () => resolve((request.result as EditorTemplate | undefined) ?? null);
+    request.onerror = () => reject(request.error ?? new Error("Could not load this template."));
+  });
+}
+
+export async function saveEditorTemplate(name: string, snapshot: ProjectSnapshot, previewImage?: string): Promise<EditorTemplateSummary> {
+  const now = Date.now();
+  const template: EditorTemplate = {
+    id: makeProjectId(),
+    name: name.trim().slice(0, 80),
+    createdAt: now,
+    updatedAt: now,
+    ...snapshot,
+    ...(previewImage ? { previewImage } : {}),
+  };
+  const db = await openDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(TEMPLATES, "readwrite");
+    tx.objectStore(TEMPLATES).put(template);
+    tx.oncomplete = () => resolve();
+    tx.onerror = tx.onabort = () => reject(tx.error ?? new Error("Could not save this template."));
+  });
+  const { id, createdAt, updatedAt } = template;
+  return { id, name: template.name, createdAt, updatedAt };
+}
+
+export async function deleteEditorTemplate(id: string): Promise<void> {
+  const db = await openDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(TEMPLATES, "readwrite");
+    tx.objectStore(TEMPLATES).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = tx.onabort = () => reject(tx.error ?? new Error("Could not delete this template."));
   });
 }
 

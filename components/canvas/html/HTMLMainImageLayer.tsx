@@ -11,6 +11,10 @@ import { type ImageFilters, useImageStore } from '@/lib/store';
 import { editingClip, motionPose, previewPose, selectMotionTarget } from '@/lib/animation/authoring';
 import { DEFAULT_ANIMATABLE_PROPERTIES } from '@/types/animation';
 import { SafariToolbar, ChromeToolbar } from '../frames/BrowserToolbar';
+import { Maximize2, Replace } from 'lucide-react';
+import { toast } from 'sonner';
+import { isVideoFile, readVideoFile } from '@/lib/video-layers';
+import { clipVisibleAt, mediaTimelineDuration } from '@/lib/export/video-timing';
 
 const ROTATE_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none'%3E%3Cpath d='M20.5 4v5h-5' stroke='%23000' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M20.5 4v5h-5' stroke='%23fff' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M19.8 14.5a8 8 0 1 1-.5-6.5l1.2-1.2' stroke='%23000' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M19.8 14.5a8 8 0 1 1-.5-6.5l1.2-1.2' stroke='%23fff' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 12 12, crosshair`;
 
@@ -175,14 +179,23 @@ export function HTMLMainImageLayer({
   useEffect(() => () => finishHistory.current?.(), []);
   const beginPose = () => { finishGesture(); const clip = editingClip('asset'); gesturePose.current = clip ? motionPose(clip) : DEFAULT_ANIMATABLE_PROPERTIES; finishHistory.current = beginMotionDrag(); };
   const imageClipPath = useImageStore((state) => state.imageClipPath);
+  const timeline = useImageStore((state) => state.timeline);
+  const mainImageStartTime = useImageStore((state) => state.mainImageStartTime ?? 0);
+  const mainImageDuration = useImageStore((state) => state.mainImageDuration ?? state.timeline.duration);
+  const mainImageVisible = clipVisibleAt(mainImageStartTime, mainImageDuration, timeline.playhead, timeline.duration);
   const containerRef = useRef<HTMLDivElement>(null);
+  const replaceInputRef = useRef<HTMLInputElement>(null);
   const [controlBounds, setControlBounds] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  const [canvasBounds, setCanvasBounds] = useState<{ left: number; top: number } | null>(null);
   React.useLayoutEffect(() => {
     if (!isMainImageSelected || !containerRef.current) return;
     const update = () => {
       const rect = containerRef.current!.getBoundingClientRect();
       const bounds = { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
       setControlBounds(old => old && Object.keys(bounds).every(key => old[key as keyof typeof old] === bounds[key as keyof typeof bounds]) ? old : bounds);
+      const canvasRect = containerRef.current!.closest('[data-html-canvas]')?.getBoundingClientRect();
+      const nextCanvasBounds = canvasRect ? { left: canvasRect.left, top: canvasRect.top } : null;
+      setCanvasBounds(old => old?.left === nextCanvasBounds?.left && old?.top === nextCanvasBounds?.top ? old : nextCanvasBounds);
     };
     update();
     window.addEventListener('resize', update);
@@ -411,7 +424,6 @@ export function HTMLMainImageLayer({
 
 
   const browserRadius = screenshot.radius;
-  const canvasBounds = containerRef.current?.closest('[data-html-canvas]')?.getBoundingClientRect();
 
   // Image border radius based on frame type
   const getImageBorderRadius = () => {
@@ -625,6 +637,8 @@ export function HTMLMainImageLayer({
           transition: hasMotion ? 'none' : 'transform 0.125s linear',
         }}
       >
+      {/* Fade the rendered asset as one group so frames and shadows follow the same eased opacity. */}
+      <div style={{ opacity: imageOpacity * (mainImageVisible ? 1 : 0) }}>
       {/* Frame container */}
       <div style={getFrameContainerStyle()}>
         {/* macOS title bar */}
@@ -643,7 +657,6 @@ export function HTMLMainImageLayer({
               width: '100%',
               height: '100%',
               objectFit: 'cover',
-              opacity: imageOpacity,
               filter: imageFilter,
               display: 'block',
               borderRadius: 'inherit',
@@ -652,18 +665,112 @@ export function HTMLMainImageLayer({
           />
         </div>
       </div>
+      </div>
 
       {/* Resize & Figma-style corner rotation handles — visible when selected, excluded from export */}
       {isMainImageSelected && controlBounds && createPortal(
         <div data-resize-handle="true" style={{ position: 'fixed', ...controlBounds, pointerEvents: 'none', outline: '1px solid rgb(59,130,246)', zIndex: 1000 }}>
-          {canvasBounds && (controlBounds.width > canvasW || controlBounds.height > canvasH || controlBounds.left < canvasBounds.left || controlBounds.top < canvasBounds.top) && <button type="button" aria-label="Fit main image to canvas" style={{ position: 'fixed', left: canvasBounds.left + 12, top: canvasBounds.top + 12, pointerEvents: 'auto' }} className="rounded-md border border-border bg-background px-3 py-2 text-xs text-foreground shadow" onPointerDown={e => e.stopPropagation()} onClick={() => {
-            const finish = beginMotionDrag();
-            const factor = Math.min(canvasW / controlBounds.width, canvasH / controlBounds.height) * 0.8;
-            const clip = editingClip('asset');
-            if (clip) previewPose('asset', { scale: Math.max(0.05, motionPose(clip).scale * factor), translateX: -screenshot.offsetX / canvasW * 100, translateY: -screenshot.offsetY / canvasH * 100 });
-            else { useImageStore.getState().setImageScale(useImageStore.getState().imageScale * factor); setScreenshot({ offsetX: 0, offsetY: 0 }); }
-            finish();
-          }}>Fit image</button>}
+          {canvasBounds && createPortal(
+            <div data-resize-handle="true" className="flex items-center gap-1.5 rounded-lg border border-border bg-background/95 p-1 shadow-lg backdrop-blur" style={{ position: 'fixed', left: canvasBounds.left + 12, top: canvasBounds.top + 12, zIndex: 3001 }}>
+              <input
+                ref={replaceInputRef}
+                type="file"
+                accept="image/*,video/*,.m4v,.mov"
+                className="hidden"
+                onChange={async event => {
+                  const file = event.target.files?.[0];
+                  if (file) {
+                    try {
+                      if (isVideoFile(file)) {
+                        const video = await readVideoFile(file);
+                        const state = useImageStore.getState();
+                        const videoOverlay = {
+                          id: 'asset',
+                          src: video.url,
+                          poster: video.poster,
+                          mediaType: 'video' as const,
+                          mediaDuration: video.duration,
+                          mediaWidth: framedW,
+                          mediaHeight: framedH,
+                          position: { x: canvasW / 2 + screenshot.offsetX, y: canvasH / 2 + screenshot.offsetY },
+                          size: Math.max(framedW, framedH),
+                          rotation: screenshot.rotation,
+                          opacity: 1,
+                          flipX: false,
+                          flipY: false,
+                          isVisible: true,
+                          isCustom: true,
+                          inheritMainStyle: true,
+                          tilt: { perspective: p3d.perspective, rotateX: 0, rotateY: 0 },
+                          shadow: {
+                            enabled: shadow.enabled,
+                            blur: shadow.softness,
+                            spread: shadow.spread,
+                            color: shadow.color,
+                            opacity: shadow.intensity,
+                            offsetX: shadow.offsetX ?? 0,
+                            offsetY: shadow.offsetY ?? 0,
+                          },
+                          startTime: 0,
+                          trimStart: 0,
+                          playbackRate: 1,
+                          loop: false,
+                        };
+                        const finish = beginMotionDrag();
+                        useImageStore.setState(current => ({
+                          uploadedImageUrl: null,
+                          imageName: file.name,
+                          imageOverlays: current.imageOverlays.some(overlay => overlay.id === 'asset')
+                            ? current.imageOverlays.map(overlay => overlay.id === 'asset' ? { ...overlay, ...videoOverlay } : overlay)
+                            : [...current.imageOverlays, videoOverlay],
+                          selectedOverlayId: 'asset',
+                          selectedOverlayIds: ['asset'],
+                          isMainImageSelected: false,
+                          lastSelectedAssetId: 'asset',
+                        }));
+                        useImageStore.getState().setTimelineDuration(Math.max(state.timeline.duration, video.duration, mediaTimelineDuration(useImageStore.getState().imageOverlays)), false);
+                        setIsMainImageSelected(false);
+                        setSelectedOverlayId('asset');
+                        finish();
+                      } else if (file.type.startsWith('image/')) {
+                        const url = URL.createObjectURL(file);
+                        try {
+                          const replacement = new Image();
+                          replacement.src = url;
+                          await replacement.decode();
+                          // Change only the media source so the current design and animation stay intact.
+                          useImageStore.getState().setUploadedImageUrl(url, file.name);
+                        } catch (error) {
+                          URL.revokeObjectURL(url);
+                          throw error;
+                        }
+                      } else {
+                        toast.error('Choose an image or video file');
+                      }
+                    } catch {
+                      toast.error('Could not load this image or video');
+                    }
+                  }
+                  event.target.value = '';
+                }}
+              />
+              <button type="button" aria-label="Replace selected image" title="Replace selected image" className="flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" style={{ pointerEvents: 'auto' }} onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); replaceInputRef.current?.click(); }}>
+                <Replace size={15} />
+              </button>
+              <button type="button" aria-label="Fit image to canvas" title="Fit image to canvas" className="flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" style={{ pointerEvents: 'auto' }} onPointerDown={e => e.stopPropagation()} onClick={e => {
+                e.stopPropagation();
+                const finish = beginMotionDrag();
+                const factor = Math.min(canvasW / controlBounds.width, canvasH / controlBounds.height) * 0.8;
+                const clip = editingClip('asset');
+                if (clip) previewPose('asset', { scale: Math.max(0.05, motionPose(clip).scale * factor), translateX: -screenshot.offsetX / canvasW * 100, translateY: -screenshot.offsetY / canvasH * 100 });
+                else { useImageStore.getState().setImageScale(useImageStore.getState().imageScale * factor); setScreenshot({ offsetX: 0, offsetY: 0 }); }
+                finish();
+              }}>
+                <Maximize2 size={15} />
+              </button>
+            </div>,
+            document.body
+          )}
           {(['tl', 'tr', 'bl', 'br'] as const).map((handle) => {
             const isTop = handle[0] === 't';
             const isLeft = handle[1] === 'l';

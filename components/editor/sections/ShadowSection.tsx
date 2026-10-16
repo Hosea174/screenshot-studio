@@ -37,17 +37,23 @@ function ShadowPreview({ shadow }: { shadow: string }) {
 
 export function ShadowSection() {
   const state = useImageStore();
+  const batchIds = state.selectedOverlayIds;
   const overlay = state.imageOverlays.find(o => o.id === state.selectedOverlayId)
     ?? (!state.uploadedImageUrl && state.editorMode !== 'device' && state.imageOverlays.length === 1 ? state.imageOverlays[0] : undefined);
   const shadow = overlay ? overlay.shadow ?? DEFAULT_OVERLAY_SHADOW : state.imageShadow;
-  const onChange = (updates: Partial<typeof shadow>) => overlay
-    ? state.updateImageOverlay(overlay.id, { shadow: { ...shadow, ...updates } })
-    : state.setImageShadow(updates);
-  const needsTarget = !overlay && !state.uploadedImageUrl && state.editorMode !== 'device' && state.imageOverlays.length > 1;
+  const onChange = (updates: Partial<typeof shadow>) => batchIds.length > 1
+    ? batchIds.forEach(id => {
+      const current = state.imageOverlays.find(item => item.id === id)?.shadow ?? DEFAULT_OVERLAY_SHADOW;
+      state.updateImageOverlay(id, { shadow: { ...current, ...updates } });
+    })
+    : overlay
+      ? state.updateImageOverlay(overlay.id, { shadow: { ...shadow, ...updates } })
+      : state.setImageShadow(updates);
+  const needsTarget = batchIds.length < 2 && !overlay && !state.uploadedImageUrl && state.editorMode !== 'device' && state.imageOverlays.length > 1;
 
   return (
     <SectionWrapper title="Shadow" defaultOpen={true}>
-      <p className="pb-2 text-xs text-muted-foreground">{needsTarget ? 'Select a layer on the canvas to edit its shadow.' : overlay ? `${overlay.mediaType === 'video' ? 'Video' : 'Image'} layer shadow` : 'Main asset shadow'}</p>
+      <p className="pb-2 text-xs text-muted-foreground">{batchIds.length > 1 ? `Shadow applies to ${batchIds.length} selected assets.` : needsTarget ? 'Select a layer on the canvas to edit its shadow.' : overlay ? `${overlay.mediaType === 'video' ? 'Video' : 'Image'} layer shadow` : 'Main asset shadow'}</p>
       {!needsTarget && <><div className="grid grid-cols-2 gap-2 p-1">
         {shadowPresets.map(({ value, label, shadow: preview }) => {
           const preset = SHADOW_PRESET_SETTINGS[value];
@@ -56,7 +62,7 @@ export function ShadowSection() {
             <button
               key={value}
               type="button"
-              onClick={() => overlay ? onChange(SHADOW_PRESET_SETTINGS[value]) : state.setShadowPreset(value)}
+              onClick={() => batchIds.length > 1 || overlay ? onChange(SHADOW_PRESET_SETTINGS[value]) : state.setShadowPreset(value)}
               className="flex flex-col items-center gap-1.5 group"
             >
               <div

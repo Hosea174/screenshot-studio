@@ -1,5 +1,6 @@
 import { useImageStore } from '@/lib/store';
-import { videoTimeAt } from './export/video-timing';
+import { beginMotionDrag } from '@/lib/animation/drag-history';
+import { mediaTimelineDuration, videoClipDuration, videoTimeAt } from './export/video-timing';
 export { videoTimeAt } from './export/video-timing';
 
 let videoCanvasSnapshotDepth = 0;
@@ -51,6 +52,70 @@ export async function addVideoLayer(file: File) {
   state.addImageOverlay({ src: video.url, poster: video.poster, mediaType: 'video', mediaDuration: video.duration, mediaWidth: video.width, mediaHeight: video.height, position: { x: width / 2, y: height / 2 }, size: Math.min(width, height) * 0.82, rotation: 0, opacity: 1, flipX: false, flipY: false, isVisible: true, isCustom: true, startTime: 0, trimStart: 0, playbackRate: 1, loop: false });
   state.setSelectedOverlayId(useImageStore.getState().imageOverlays.at(-1)!.id);
   state.setShowTimeline(true);
+}
+
+/** Replace only the source media of a layer, retaining its design and animation target. */
+export async function replaceOverlayMedia(overlayId: string, file: File) {
+  const state = useImageStore.getState();
+  const overlay = state.imageOverlays.find(item => item.id === overlayId);
+  if (!overlay) throw new Error('The selected layer no longer exists');
+
+  if (isVideoFile(file)) {
+    const video = await readVideoFile(file);
+    const targetDuration = overlay.mediaType === 'video'
+      ? videoClipDuration(overlay)
+      : Math.max(1000 / 60, overlay.clipDuration ?? 5000);
+    const playbackRate = Math.max(0.1, Math.min(16, video.duration * 1000 / targetDuration));
+    const finish = beginMotionDrag();
+    try {
+      state.updateImageOverlay(overlayId, {
+        src: video.url,
+        poster: video.poster,
+        mediaType: 'video',
+        mediaDuration: video.duration,
+        trimStart: 0,
+        trimEnd: video.duration,
+        playbackRate,
+        loop: false,
+        // Keep the layer's designed frame dimensions so swapping source aspect
+        // ratios doesn't move or resize the asset on the canvas.
+        mediaWidth: overlay.mediaWidth ?? video.width,
+        mediaHeight: overlay.mediaHeight ?? video.height,
+        isCustom: true,
+      });
+      state.setTimelineDuration(Math.max(state.timeline.duration, mediaTimelineDuration(useImageStore.getState().imageOverlays)), false);
+    } finally { finish(); }
+    return;
+  }
+
+  if (!file.type.startsWith('image/')) throw new Error('Choose an image or video file');
+  const clipDuration = overlay.mediaType === 'video' ? videoClipDuration(overlay) : overlay.clipDuration;
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    const finish = beginMotionDrag();
+    try {
+      state.updateImageOverlay(overlayId, {
+        src: url,
+        poster: undefined,
+        mediaType: 'image',
+        mediaDuration: undefined,
+        trimStart: undefined,
+        trimEnd: undefined,
+        playbackRate: undefined,
+        loop: undefined,
+        clipDuration,
+        mediaWidth: overlay.mediaWidth ?? image.naturalWidth,
+        mediaHeight: overlay.mediaHeight ?? image.naturalHeight,
+        isCustom: true,
+      });
+    } finally { finish(); }
+  } catch (error) {
+    URL.revokeObjectURL(url);
+    throw error;
+  }
 }
 
 export async function readVideoFile(file: File) {

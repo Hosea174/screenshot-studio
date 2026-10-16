@@ -62,11 +62,15 @@ export function EditorProjectMenu() {
             disabled={loading || busy}
             aria-label={`Projects: ${activeProject?.name ?? "Loading"}`}
             title={error ?? (saving ? "Saving project…" : "Saved locally")}
-            className="ml-1 h-8 max-w-[190px] gap-1.5 px-2 text-xs font-medium text-muted-foreground hover:text-foreground sm:max-w-[230px]"
+            className="ml-1 h-9 max-w-[clamp(6rem,16vw,11.875rem)] gap-1.5 px-2.5 text-xs font-medium text-muted-foreground hover:bg-muted/70 hover:text-foreground"
           >
             <FolderOpen size={14} className="shrink-0" />
             <span className="truncate">{loading ? "Loading…" : activeProject?.name ?? "Projects"}</span>
-            {saving ? <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-amber-500" aria-label="Saving" /> : null}
+            <span
+              className={`size-1.5 shrink-0 rounded-full ${saving ? "animate-pulse bg-amber-500" : "opacity-0"}`}
+              aria-label={saving ? "Saving" : undefined}
+              aria-hidden={!saving}
+            />
             <ChevronDown size={13} className="shrink-0" />
           </Button>
         </DropdownMenuTrigger>

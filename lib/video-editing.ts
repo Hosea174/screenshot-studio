@@ -1,20 +1,29 @@
 import { useImageStore, type ImageOverlay } from '@/lib/store';
 import { useMotionSelection } from './animation/editor';
 import { beginMotionDrag } from './animation/drag-history';
-import { mediaTimelineDuration, videoClipEnd, videoSourceRange } from './export/video-timing';
+import { imageClipDuration, mediaTimelineDuration, videoClipEnd, videoSourceRange } from './export/video-timing';
 
 const FRAME = 1000 / 60;
 export const MIN_VIDEO_SPEED = 0.1;
 export const MAX_VIDEO_SPEED = 16;
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
-export function selectVideoClip(id: string) {
+export const MAIN_IMAGE_TRACK_ID = '__main_image__';
+
+export function selectTimelineAsset(id: string) {
   const state = useImageStore.getState();
   state.stopPlayback();
-  state.setSelectedOverlayId(id);
-  state.setIsMainImageSelected(false);
-  useMotionSelection.getState().selectVideo(id);
+  if (id === MAIN_IMAGE_TRACK_ID) {
+    state.setSelectedOverlayId(null);
+    state.setIsMainImageSelected(true);
+  } else {
+    state.setSelectedOverlayId(id);
+    state.setIsMainImageSelected(false);
+  }
+  useMotionSelection.getState().selectMedia(id);
 }
+
+export const selectVideoClip = selectTimelineAsset;
 
 /** Source endpoints stay fixed for speed handles; trim handles keep the rate. */
 export function videoEdgeUpdates(overlay: ImageOverlay, side: 'left' | 'right', mode: 'speed' | 'trim', time: number): Partial<ImageOverlay> {
@@ -38,7 +47,9 @@ function timelineFor(overlays: ImageOverlay[], clips = useImageStore.getState().
   const state = useImageStore.getState();
   const extent = (media: ImageOverlay[], animations = state.animationClips) => Math.max(mediaTimelineDuration(media), ...animations.map(c => c.startTime + c.duration));
   const end = extent(overlays, clips);
-  const duration = state.timeline.duration <= extent(state.imageOverlays) + 1 ? end : Math.max(state.timeline.duration, end);
+  const duration = state.timeline.durationLocked
+    ? state.timeline.duration
+    : state.timeline.duration <= extent(state.imageOverlays) + 1 ? end : Math.max(state.timeline.duration, end);
   return { ...state.timeline, duration, playhead: Math.min(state.timeline.playhead, duration), isPlaying: false };
 }
 
@@ -48,11 +59,88 @@ export function updateVideoClip(id: string, updates: Partial<ImageOverlay>) {
   useImageStore.setState({ imageOverlays, timeline: timelineFor(imageOverlays) });
 }
 
+export function updateImageClip(id: string, updates: { startTime?: number; clipDuration?: number }) {
+  if (id === MAIN_IMAGE_TRACK_ID) {
+    const state = useImageStore.getState();
+    const startTime = Math.max(0, updates.startTime ?? state.mainImageStartTime ?? 0);
+    const clipDuration = Math.max(FRAME, updates.clipDuration ?? state.mainImageDuration ?? state.timeline.duration);
+    const end = startTime + clipDuration;
+    useImageStore.setState({
+      mainImageStartTime: startTime,
+      mainImageDuration: clipDuration,
+      ...(end > state.timeline.duration && !state.timeline.durationLocked ? { timeline: { ...state.timeline, duration: end } } : {}),
+    });
+    return;
+  }
+  const state = useImageStore.getState();
+  const imageOverlays = state.imageOverlays.map(overlay => {
+    if (overlay.id !== id || overlay.mediaType === 'video') return overlay;
+    return {
+      ...overlay,
+      startTime: Math.max(0, updates.startTime ?? overlay.startTime ?? 0),
+      clipDuration: Math.max(FRAME, updates.clipDuration ?? imageClipDuration(overlay, state.timeline.duration)),
+    };
+  });
+  useImageStore.setState({ imageOverlays, timeline: timelineFor(imageOverlays) });
+}
+
+export function trimImageAt(id: string, side: 'left' | 'right') {
+  const state = useImageStore.getState();
+  const overlay = state.imageOverlays.find(item => item.id === id && item.mediaType !== 'video');
+  const isMain = id === MAIN_IMAGE_TRACK_ID;
+  if ((!overlay && !isMain) || (isMain && !state.uploadedImageUrl)) return false;
+  const start = isMain ? state.mainImageStartTime ?? 0 : overlay!.startTime ?? 0;
+  const duration = isMain ? state.mainImageDuration ?? state.timeline.duration : imageClipDuration(overlay!, state.timeline.duration);
+  const end = start + duration;
+  const time = state.timeline.playhead;
+  if (time - start < FRAME || end - time < FRAME) return false;
+  const finish = beginMotionDrag();
+  try {
+    updateImageClip(id, side === 'left'
+      ? { startTime: time, clipDuration: end - time }
+      : { clipDuration: time - start });
+  } finally { finish(); }
+  return true;
+}
+
+export function fitImageClipToTimeline(id: string) {
+  const state = useImageStore.getState();
+  const finish = beginMotionDrag();
+  try {
+    updateImageClip(id, { startTime: 0, clipDuration: Math.max(FRAME, state.timeline.duration) });
+    useImageStore.getState().setTimeline({ duration: state.timeline.duration, durationLocked: true });
+  } finally { finish(); }
+}
+
 export function setVideoSpeed(id: string, speed: number) {
   if (!Number.isFinite(speed)) return;
   const finish = beginMotionDrag();
   try { updateVideoClip(id, { playbackRate: clamp(speed, MIN_VIDEO_SPEED, MAX_VIDEO_SPEED), loop: false }); }
   finally { finish(); }
+}
+
+/** Fit a video clip to the current timeline duration from its start. */
+export function fitVideoClipToTimeline(id: string, mode: 'speed' | 'trim') {
+  const state = useImageStore.getState();
+  const video = state.imageOverlays.find(o => o.id === id && o.mediaType === 'video');
+  if (!video) return;
+
+  const duration = Math.max(FRAME, state.timeline.duration);
+  const sourceDuration = videoSourceRange(video).end - videoSourceRange(video).start;
+  const finish = beginMotionDrag();
+  try {
+    if (mode === 'speed') {
+      const playbackRate = clamp(sourceDuration * 1000 / duration, MIN_VIDEO_SPEED, MAX_VIDEO_SPEED);
+      updateVideoClip(id, { startTime: 0, playbackRate, loop: false });
+    } else {
+      const rate = Math.max(MIN_VIDEO_SPEED, video.playbackRate ?? 1);
+      const mediaDuration = Math.max(0, video.mediaDuration ?? videoSourceRange(video).end);
+      const minimumSource = Math.min(FRAME / 1000 * rate, mediaDuration);
+      const trimEnd = Math.max(minimumSource, Math.min(mediaDuration, duration / 1000 * rate));
+      updateVideoClip(id, { startTime: 0, trimStart: 0, trimEnd, loop: false });
+    }
+    useImageStore.getState().setTimeline({ duration, durationLocked: true });
+  } finally { finish(); }
 }
 
 export function trimVideoAt(id: string, side: 'left' | 'right') {
@@ -97,6 +185,6 @@ export function deleteVideoClip(id: string) {
     const animationClips = state.animationClips.filter(c => !removed.has(c.id));
     const tracks = state.timeline.tracks.filter(t => !t.clipId || !removed.has(t.clipId));
     useImageStore.setState({ imageOverlays, animationClips, selectedOverlayId: null, timeline: { ...timelineFor(imageOverlays, animationClips), tracks } });
-    useMotionSelection.getState().selectVideo(null);
+    useMotionSelection.getState().selectMedia(null);
   } finally { finish(); }
 }

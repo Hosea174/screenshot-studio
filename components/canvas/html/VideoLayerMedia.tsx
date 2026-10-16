@@ -9,6 +9,7 @@ export function VideoLayerMedia({ overlay, style }: { overlay: ImageOverlay; sty
   const ref = React.useRef<HTMLVideoElement>(null);
   const playhead = useImageStore(s => s.timeline.playhead);
   const playing = useImageStore(s => s.timeline.isPlaying);
+  const timelineDuration = useImageStore(s => s.timeline.duration);
   const settleFrame = (video: HTMLVideoElement) => {
     if (useExportProgress.getState().active) return;
     const latest = useImageStore.getState().timeline;
@@ -52,9 +53,9 @@ export function VideoLayerMedia({ overlay, style }: { overlay: ImageOverlay; sty
     const target = videoTimeAt(overlay, playhead);
     if (!video.seeking && video.readyState >= 2 && Math.abs(video.currentTime - target) > (playing ? 0.12 : 0.001)) video.currentTime = target;
     video.playbackRate = overlay.playbackRate ?? 1;
-    if (playing && videoVisibleAt(overlay, playhead)) void video.play().catch(() => {});
+    if (playing && videoVisibleAt(overlay, playhead, timelineDuration)) void video.play().catch(() => {});
     else video.pause();
-  }, [playhead, playing, overlay]);
+  }, [playhead, playing, overlay, timelineDuration]);
   React.useEffect(() => {
     if (!playing) return;
     const video = ref.current;
@@ -74,8 +75,10 @@ export function VideoLayerMedia({ overlay, style }: { overlay: ImageOverlay; sty
     return () => cancelAnimationFrame(raf);
   }, [playing, overlay.id]);
   return <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-    <video ref={ref} muted playsInline preload="auto" data-video-layer={overlay.id} data-export-exclude="true" style={style} aria-label="Video layer" onLoadedData={e => settleFrame(e.currentTarget)} onSeeked={e => settleFrame(e.currentTarget)} />
-    {/* The editor displays decoded video directly; DOM exports capture this canvas. */}
-    <canvas data-video-canvas={overlay.id} data-video-export="true" width={overlay.mediaWidth ?? 640} height={overlay.mediaHeight ?? 360} style={{ ...style, position: 'absolute', inset: 0, visibility: 'hidden' }} aria-hidden="true" />
+    {/* Keep the decoder alive, but display its full-resolution frame canvas.
+        CSS-transformed/clipped video elements can be rasterized at reduced
+        quality by the browser compositor; the canvas preserves source pixels. */}
+    <video ref={ref} muted playsInline preload="auto" data-video-layer={overlay.id} data-export-exclude="true" style={{ ...style, visibility: 'hidden' }} aria-label="Video layer" onLoadedData={e => settleFrame(e.currentTarget)} onSeeked={e => settleFrame(e.currentTarget)} />
+    <canvas data-video-canvas={overlay.id} data-video-export="true" width={overlay.mediaWidth ?? 640} height={overlay.mediaHeight ?? 360} style={{ ...style, position: 'absolute', inset: 0, visibility: 'visible' }} aria-hidden="true" />
   </div>;
 }

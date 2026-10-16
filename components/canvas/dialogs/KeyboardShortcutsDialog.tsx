@@ -17,7 +17,9 @@ interface ShortcutGroup {
 const shortcutGroups: ShortcutGroup[] = [
   { title: 'Animation timeline', shortcuts: [
     { keys: ['Space'], description: 'Play / pause anywhere in the editor' },
+    { keys: ['Ctrl', '`'], description: 'Toggle the timeline' },
     { keys: ['K'], description: 'Capture keyframe at playhead' },
+    { keys: ['Ctrl', '← / →'], description: 'Jump to the previous / next keyframe' },
     { keys: ['← / →'], description: 'Step one frame (60 fps)' },
     { keys: ['Shift', '← / →'], description: 'Step ten frames' },
     { keys: ['Home / End'], description: 'Jump to timeline bounds' },
@@ -36,6 +38,8 @@ const shortcutGroups: ShortcutGroup[] = [
       { keys: ["⌘/Ctrl", "Shift", "Z"], description: "Redo" },
       { keys: ["⌘/Ctrl", "Y"], description: "Redo (alternative)" },
       { keys: ["Delete / Backspace"], description: "Delete selected item" },
+      { keys: ["["], description: "Send selected asset to back" },
+      { keys: ["]"], description: "Bring selected asset to front" },
       { keys: ["Esc"], description: "Close dialog / Deselect item" },
     ],
   },

@@ -9,6 +9,8 @@ export function useTemplateMediaSource(): string {
   const imageName = useImageStore((state) => state.imageName);
   const imageOverlays = useImageStore((state) => state.imageOverlays);
   const selectedOverlayId = useImageStore((state) => state.selectedOverlayId);
+  const lastSelectedAssetId = useImageStore((state) => state.lastSelectedAssetId);
+  const isMainImageSelected = useImageStore((state) => state.isMainImageSelected);
   const screenshot = useEditorStore((state) => state.screenshot);
 
   const uploadedSource = isTemplateDemoMedia(uploadedImageUrl, imageName)
@@ -19,13 +21,24 @@ export function useTemplateMediaSource(): string {
     || screenshot?.src === TEMPLATE_DEMO_IMAGE_URL
     ? null
     : screenshot?.src;
-  const selected = imageOverlays.find((overlay) => overlay.id === selectedOverlayId && overlay.isVisible);
-  const overlay = selected ?? imageOverlays.find((item) => (
+  const visibleOverlays = imageOverlays.filter((item) => (
     item.isVisible && !item.src.includes('overlay-shadow')
   ));
+  const selected = visibleOverlays.find((overlay) => overlay.id === selectedOverlayId);
+  const lastSelected = !isMainImageSelected && lastSelectedAssetId && lastSelectedAssetId !== 'asset'
+    ? visibleOverlays.find((overlay) => overlay.id === lastSelectedAssetId)
+    : undefined;
+  const overlay = selected
+    ?? lastSelected
+    ?? (!uploadedSource && visibleOverlays.length === 1 ? visibleOverlays[0] : undefined);
   const overlaySource = overlay?.mediaType === 'video'
     ? overlay.poster ?? null
     : overlay?.src ?? null;
 
-  return uploadedSource ?? screenshotSource ?? overlaySource ?? TEMPLATE_DEMO_IMAGE_URL;
+  const fallbackOverlay = visibleOverlays[0];
+  const fallbackOverlaySource = fallbackOverlay?.mediaType === 'video'
+    ? fallbackOverlay.poster ?? null
+    : fallbackOverlay?.src ?? null;
+
+  return overlaySource ?? uploadedSource ?? screenshotSource ?? fallbackOverlaySource ?? TEMPLATE_DEMO_IMAGE_URL;
 }

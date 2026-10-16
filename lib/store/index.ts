@@ -106,6 +106,8 @@ export interface ImageOverlay {
   mediaWidth?: number;
   mediaHeight?: number;
   startTime?: number;
+  /** Timeline-visible duration for still images; videos derive this from source range and speed. */
+  clipDuration?: number;
   trimStart?: number;
   /** Exclusive source endpoint in seconds; omitted means the source's end. */
   trimEnd?: number;
@@ -133,6 +135,7 @@ export interface ImageOverlay {
   frame?: ImageBorder;
   /** Base scale controlled by the Design panel, independent of animation scale. */
   scale?: number;
+  hsl?: { hue: number; saturation: number; lightness: number };
 }
 
 export type BlurRegionStyle = 'blur' | 'mosaic';
@@ -636,6 +639,8 @@ export interface ImageState {
   editorSnapshot: EditorSnapshot;
   uploadedImageUrl: string | null;
   imageName: string | null;
+  mainImageStartTime?: number;
+  mainImageDuration?: number;
   selectedGradient: GradientKey;
   borderRadius: number;
   backgroundBorderRadius: number;
@@ -768,7 +773,7 @@ export interface ImageState {
   removeTrack: (trackId: string) => void;
   applyAnimationPreset: (presetId: string) => void;
   clearTimeline: () => void;
-  setTimelineDuration: (duration: number) => void;
+  setTimelineDuration: (duration: number, lockDuration?: boolean) => void;
   // Animation clips
   addAnimationClip: (presetId: string, startTime: number, target?: string) => void;
   updateAnimationClip: (clipId: string, updates: Partial<AnimationClip>) => void;
@@ -829,10 +834,12 @@ export interface ImageState {
 
   // Layer Selection State
   selectedOverlayId: string | null;
+  selectedOverlayIds: string[];
   isMainImageSelected: boolean;
   /** Last canvas asset targeted by transform controls; excluded from undo history. */
   lastSelectedAssetId: string | null;
   setSelectedOverlayId: (id: string | null) => void;
+  setSelectedOverlayIds: (ids: string[]) => void;
   setIsMainImageSelected: (selected: boolean) => void;
 }
 
@@ -882,9 +889,11 @@ export const useImageStore = create<ImageState>()(
 
     uploadedImageUrl: null,
     imageName: null,
+    mainImageStartTime: 0,
+    mainImageDuration: 5000,
     selectedGradient: "vibrant_orange_pink",
-    borderRadius: 10,
-    backgroundBorderRadius: 10,
+    borderRadius: 0,
+    backgroundBorderRadius: 0,
     selectedAspectRatio: "4_3",
     customDimensions: null,
     backgroundConfig: {
@@ -909,7 +918,7 @@ export const useImageStore = create<ImageState>()(
       width: 8,
       color: "#000000",
       type: "none",
-      padding: 20,
+      padding: 0.5,
       title: "",
     },
     imageShadow: {
@@ -919,7 +928,7 @@ export const useImageStore = create<ImageState>()(
       offsetY: 8,
       spread: 3,
       color: "rgba(0, 0, 0, 0.6)",
-      opacity: 0.5,
+      opacity: 0.25,
     },
     imageStylePreset: 'default' as ImageStylePreset,
     shadowPreset: 'soft' as ShadowPreset,
@@ -994,11 +1003,13 @@ export const useImageStore = create<ImageState>()(
       set({
         uploadedImageUrl: imageUrl,
         imageName: file.name,
+        mainImageStartTime: 0,
+        mainImageDuration: 5000,
         // Reset image settings
         imageScale: 100,
         imageOpacity: 1,
-        borderRadius: 10,
-        backgroundBorderRadius: 10,
+        borderRadius: 0,
+        backgroundBorderRadius: 0,
         // Reset background
         backgroundConfig: {
           type: "image",
@@ -1016,7 +1027,7 @@ export const useImageStore = create<ImageState>()(
           offsetY: 8,
           spread: 3,
           color: "rgba(0, 0, 0, 0.6)",
-          opacity: 0.5,
+          opacity: 0.25,
         },
         // Reset border/frame
         imageBorder: {
@@ -1024,7 +1035,7 @@ export const useImageStore = create<ImageState>()(
           width: 8,
           color: "#000000",
           type: "none",
-          padding: 20,
+          padding: 0.5,
           title: "",
         },
         imageStylePreset: 'default' as ImageStylePreset,
@@ -1084,8 +1095,8 @@ export const useImageStore = create<ImageState>()(
         // Reset image settings
         imageScale: 100,
         imageOpacity: 1,
-        borderRadius: 10,
-        backgroundBorderRadius: 10,
+        borderRadius: 0,
+        backgroundBorderRadius: 0,
         // Reset background
         backgroundConfig: {
           type: "image",
@@ -1103,7 +1114,7 @@ export const useImageStore = create<ImageState>()(
           offsetY: 8,
           spread: 3,
           color: "rgba(0, 0, 0, 0.6)",
-          opacity: 0.5,
+          opacity: 0.25,
         },
         // Reset border/frame
         imageBorder: {
@@ -1111,7 +1122,7 @@ export const useImageStore = create<ImageState>()(
           width: 8,
           color: "#000000",
           type: "none",
-          padding: 20,
+          padding: 0.5,
           title: "",
         },
         imageStylePreset: 'default' as ImageStylePreset,
@@ -1188,7 +1199,19 @@ export const useImageStore = create<ImageState>()(
 
     setBackgroundConfig: (config: BackgroundConfig) => {
       trackBackgroundChange(config.type, config.value as string);
-      set({ backgroundConfig: config });
+      const current = get().backgroundConfig;
+      const hslByImage = { ...(current.hslByImage ?? {}), ...(config.hslByImage ?? {}) };
+      if (current.type === 'image' && typeof current.value === 'string' && current.hsl) {
+        hslByImage[current.value] = current.hsl;
+      }
+      if (config.type === 'image' && typeof config.value === 'string') {
+        const explicitlyReset = Object.prototype.hasOwnProperty.call(config, 'hsl') && !config.hsl;
+        if (config.hsl) hslByImage[config.value] = config.hsl;
+        else if (explicitlyReset) delete hslByImage[config.value];
+        set({ backgroundConfig: { ...config, hsl: explicitlyReset ? undefined : config.hsl ?? hslByImage[config.value] ?? { hue: 0, saturation: 100, lightness: 100 }, hslByImage } });
+        return;
+      }
+      set({ backgroundConfig: { ...config, hslByImage } });
     },
 
     setBackgroundType: (type: BackgroundType) => {
@@ -1213,11 +1236,17 @@ export const useImageStore = create<ImageState>()(
             ? "backgrounds/raycast/red_distortion_4.webp"
             : currentValue;
 
+        const hslByImage = { ...(backgroundConfig.hslByImage ?? {}) };
+        if (backgroundConfig.type === 'image' && typeof backgroundConfig.value === 'string' && backgroundConfig.hsl) {
+          hslByImage[backgroundConfig.value] = backgroundConfig.hsl;
+        }
         set({
           backgroundConfig: {
             ...backgroundConfig,
             type,
             value: newValue,
+            hsl: hslByImage[newValue] ?? { hue: 0, saturation: 100, lightness: 100 },
+            hslByImage,
           },
         });
       } else {
@@ -1232,10 +1261,17 @@ export const useImageStore = create<ImageState>()(
 
     setBackgroundValue: (value: string) => {
       const { backgroundConfig } = get();
+      const hslByImage = { ...(backgroundConfig.hslByImage ?? {}) };
+      if (backgroundConfig.type === 'image' && typeof backgroundConfig.value === 'string' && backgroundConfig.hsl) {
+        hslByImage[backgroundConfig.value] = backgroundConfig.hsl;
+      }
       set({
         backgroundConfig: {
           ...backgroundConfig,
           value,
+          ...(backgroundConfig.type === 'image'
+            ? { hsl: hslByImage[value] ?? { hue: 0, saturation: 100, lightness: 100 }, hslByImage }
+            : {}),
         },
       });
     },
@@ -1298,10 +1334,16 @@ export const useImageStore = create<ImageState>()(
         .toString(36)
         .substr(2, 9)}`;
       const finish = beginMotionDrag();
+      const timelineAsset = {
+        ...overlay,
+        ...(overlay.mediaType === 'video'
+          ? {}
+          : { startTime: overlay.startTime ?? 0, clipDuration: overlay.clipDuration ?? 5000 }),
+      };
       set((state) => ({
-        imageOverlays: [...state.imageOverlays, { blur: 0, ...overlay, id }],
+        imageOverlays: [...state.imageOverlays, { blur: 0, ...timelineAsset, id }],
       }));
-      if (overlay.mediaType === 'video') get().setTimelineDuration(mediaTimelineDuration(get().imageOverlays));
+      get().setTimelineDuration(Math.max(get().timeline.duration, mediaTimelineDuration(get().imageOverlays)), false);
       finish();
     },
 
@@ -1622,6 +1664,48 @@ export const useImageStore = create<ImageState>()(
       const template = getAnimatedTemplateById(templateId);
       if (!template) return;
 
+      const current = get();
+      const visibleAssetOverlays = current.imageOverlays.filter(overlay => (
+        overlay.isVisible && !overlay.src.includes('overlay-shadow')
+      ));
+      const selectedLayer = visibleAssetOverlays.find(overlay => overlay.id === current.selectedOverlayId);
+      const lastSelectedLayer = !current.isMainImageSelected
+        && current.lastSelectedAssetId
+        && current.lastSelectedAssetId !== 'asset'
+        ? visibleAssetOverlays.find(overlay => overlay.id === current.lastSelectedAssetId)
+        : undefined;
+      const targetLayer = selectedLayer ?? lastSelectedLayer;
+      const target = targetLayer?.id ?? 'asset';
+      const hasOtherTargetAnimation = current.animationClips.some(clip => (clip.target ?? 'asset') !== target);
+      if (targetLayer || hasOtherTargetAnimation) {
+        const animation = buildAnimatedTemplateTimeline(template);
+        if (!animation) return;
+        const startTime = current.animationClips
+          .filter(clip => (clip.target ?? 'asset') === target)
+          .reduce((end, clip) => Math.max(end, clip.startTime + clip.duration), 0);
+        const appliedClip = { ...animation.clip, target, startTime };
+        const addedTracks = splitPropertyTracks(animation.tracks).map(track => ({
+          ...track,
+          keyframes: track.keyframes.map(keyframe => ({ ...keyframe, time: keyframe.time + startTime })),
+        }));
+        trackPresetApply(`animated:${template.id}`, template.name);
+        set(state => ({
+          animationClips: [...state.animationClips, appliedClip],
+          timeline: {
+            ...state.timeline,
+            duration: state.timeline.durationLocked
+              ? state.timeline.duration
+              : Math.max(state.timeline.duration, startTime + appliedClip.duration),
+            tracks: [...state.timeline.tracks, ...addedTracks],
+            isPlaying: false,
+          },
+          showTimeline: true,
+          showTemplates: false,
+        }));
+        useMotionSelection.getState().selectClip(appliedClip.id);
+        return;
+      }
+
       if (template.category === 'cinematic' || template.category === 'smooth') {
         const animation = buildAnimatedTemplateTimeline(template);
         if (!animation) return;
@@ -1809,8 +1893,8 @@ export const useImageStore = create<ImageState>()(
       set({
         imageScale: 100,
         imageOpacity: 1,
-        borderRadius: 10,
-        backgroundBorderRadius: 10,
+        borderRadius: 0,
+        backgroundBorderRadius: 0,
         backgroundConfig: {
           type: "image",
           value: "backgrounds/raycast/red_distortion_4.webp",
@@ -1826,14 +1910,14 @@ export const useImageStore = create<ImageState>()(
           offsetY: 8,
           spread: 3,
           color: "rgba(0, 0, 0, 0.6)",
-          opacity: 0.5,
+          opacity: 0.25,
         },
         imageBorder: {
           enabled: false,
           width: 8,
           color: "#000000",
           type: "none",
-          padding: 20,
+          padding: 0.5,
           title: "",
         },
         imageStylePreset: 'default' as ImageStylePreset,
@@ -2113,7 +2197,7 @@ export const useImageStore = create<ImageState>()(
       });
     },
 
-    setTimelineDuration: (duration) => {
+    setTimelineDuration: (duration, lockDuration = true) => {
       if (!Number.isFinite(duration)) return;
       set((state) => {
         const newDuration = Math.max(500, duration);
@@ -2125,6 +2209,7 @@ export const useImageStore = create<ImageState>()(
           timeline: {
             ...state.timeline,
             duration: newDuration,
+            durationLocked: lockDuration || state.timeline.durationLocked,
             tracks: retimed,
             playhead: Math.min(state.timeline.playhead, newDuration),
           },
@@ -2179,7 +2264,7 @@ export const useImageStore = create<ImageState>()(
         animationClips: [...state.animationClips, newClip],
         timeline: {
           ...state.timeline,
-          duration: Math.max(state.timeline.duration, startTime + preset.duration),
+          duration: state.timeline.durationLocked ? state.timeline.duration : Math.max(state.timeline.duration, startTime + preset.duration),
           tracks: [...state.timeline.tracks, ...tracks],
         },
         showTimeline: true,
@@ -2204,7 +2289,7 @@ export const useImageStore = create<ImageState>()(
           ),
           timeline: {
             ...state.timeline,
-            duration: Math.max(state.timeline.duration, newClip.startTime + newClip.duration),
+            duration: state.timeline.durationLocked ? state.timeline.duration : Math.max(state.timeline.duration, newClip.startTime + newClip.duration),
             tracks: updatedTracks,
           },
         };
@@ -2375,23 +2460,36 @@ export const useImageStore = create<ImageState>()(
       set({ rulerInterval: Math.max(1, Math.round(Number.isFinite(interval) ? interval : 100)) }),
 
     selectedOverlayId: null,
+    selectedOverlayIds: [],
     isMainImageSelected: false,
     lastSelectedAssetId: null,
     setSelectedOverlayId: (id: string | null) =>
       set((state) => ({
         selectedOverlayId: id,
+        selectedOverlayIds: id ? [id] : [],
         isMainImageSelected: id ? false : state.isMainImageSelected,
         ...(id ? { lastSelectedAssetId: id } : {}),
       })),
+    setSelectedOverlayIds: (ids: string[]) => set((state) => {
+      const validIds = [...new Set(ids)].filter(id => state.imageOverlays.some(overlay => overlay.id === id));
+      const activeId = validIds.at(-1) ?? null;
+      return {
+        selectedOverlayIds: validIds,
+        selectedOverlayId: activeId,
+        isMainImageSelected: false,
+        ...(activeId ? { lastSelectedAssetId: activeId } : {}),
+      };
+    }),
     setIsMainImageSelected: (selected: boolean) =>
       set((state) => ({
         isMainImageSelected: selected,
         selectedOverlayId: selected ? null : state.selectedOverlayId,
+        selectedOverlayIds: selected ? [] : state.selectedOverlayIds,
         ...(selected ? { lastSelectedAssetId: 'asset' } : {}),
       })),
   }), {
     // Layout measurements change on mount/resize and must not erase redo history.
-    partialize: ({ selectedOverlayId: _overlay, isMainImageSelected: _main, lastSelectedAssetId: _lastSelected, canvasDimensions: _dimensions, showTimeline: _timeline, activeRightPanelTab: _panel, showTemplates: _templates, showRulers: _rulers, showGrid: _grid, ...state }) => ({ ...state, timeline: { ...state.timeline, playhead: 0, isPlaying: false, zoom: 1, isLooping: true } }),
+    partialize: ({ selectedOverlayId: _overlay, selectedOverlayIds: _overlays, isMainImageSelected: _main, lastSelectedAssetId: _lastSelected, canvasDimensions: _dimensions, showTimeline: _timeline, activeRightPanelTab: _panel, showTemplates: _templates, showRulers: _rulers, showGrid: _grid, ...state }) => ({ ...state, timeline: { ...state.timeline, playhead: 0, isPlaying: false, zoom: 1, isLooping: true } }),
     equality: (past, current) => shallow({ ...past, timeline: null }, { ...current, timeline: null }) && shallow(past.timeline, current.timeline),
   })
 );
@@ -2425,6 +2523,9 @@ useImageStore.subscribe((state) => {
   if (selectedClip && !state.animationClips.some(c => c.id === selectedClip)) useMotionSelection.getState().selectClip(null);
   if (state.selectedOverlayId && !state.imageOverlays.some((overlay) => overlay.id === state.selectedOverlayId)) {
     state.setSelectedOverlayId(null);
+  }
+  if (state.selectedOverlayIds.some(id => !state.imageOverlays.some(overlay => overlay.id === id))) {
+    state.setSelectedOverlayIds(state.selectedOverlayIds.filter(id => state.imageOverlays.some(overlay => overlay.id === id)));
   }
   if (state.isMainImageSelected && !state.uploadedImageUrl) {
     state.setIsMainImageSelected(false);

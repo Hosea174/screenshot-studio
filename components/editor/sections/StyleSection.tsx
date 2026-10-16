@@ -81,23 +81,44 @@ function StylePreview({ preset }: { preset: ImageStylePreset }) {
 
 export function StyleSection() {
   const state = useImageStore();
+  const batchIds = state.selectedOverlayIds;
   const overlay = state.imageOverlays.find((item) => item.id === state.selectedOverlayId)
     ?? (!state.uploadedImageUrl && state.editorMode !== 'device' && state.imageOverlays.length === 1 ? state.imageOverlays[0] : undefined);
   const isPrimaryOverlay = Boolean(overlay && (overlay.inheritMainStyle || (!state.uploadedImageUrl && state.editorMode !== 'device' && state.imageOverlays.length === 1)));
-  const defaultFrame: ImageBorder = { enabled: false, type: 'none', width: 1, color: '#ffffff', padding: 0, title: '', opacity: 1 };
+  const defaultFrame: ImageBorder = { enabled: false, type: 'none', width: 1, color: '#ffffff', padding: 0.5, title: '', opacity: 1 };
   const frame = overlay?.frame ?? (isPrimaryOverlay ? state.imageBorder : defaultFrame);
   const imageStylePreset: ImageStylePreset = overlay?.frame
     ? (overlay.frame.type === 'outline-light' ? 'outline' : overlay.frame.type === 'none' ? 'default' : overlay.frame.type as ImageStylePreset)
     : isPrimaryOverlay ? state.imageStylePreset : overlay ? 'default' : state.imageStylePreset;
-  const needsTarget = !overlay && !state.uploadedImageUrl && state.editorMode !== 'device' && state.imageOverlays.length > 1;
+  const needsTarget = batchIds.length < 2 && !overlay && !state.isMainImageSelected && !state.uploadedImageUrl && state.editorMode !== 'device' && state.imageOverlays.length > 1;
 
   const isNonDefault = imageStylePreset !== 'default';
   const currentOpacity = frame.opacity ?? 0.3;
-  const currentPadding = frame.padding ?? 2;
-  const setFrame = (changes: Partial<ImageBorder>) => overlay
-    ? state.updateImageOverlay(overlay.id, { frame: { ...frame, ...changes } })
-    : state.setImageBorder(changes);
+  const currentPadding = frame.padding ?? 0.5;
+  const setFrame = (changes: Partial<ImageBorder>) => batchIds.length > 1
+    ? batchIds.forEach(id => {
+      const current = state.imageOverlays.find(item => item.id === id)?.frame ?? { ...defaultFrame };
+      state.updateImageOverlay(id, { frame: { ...current, ...changes } });
+    })
+    : overlay
+      ? state.updateImageOverlay(overlay.id, { frame: { ...frame, ...changes } })
+      : state.setImageBorder(changes);
   const applyStyle = (preset: ImageStylePreset) => {
+    if (batchIds.length > 1) {
+      const presetFrames: Record<ImageStylePreset, Partial<ImageBorder>> = {
+        default: { enabled: false, type: 'none' },
+        'glass-light': { enabled: true, type: 'glass-light', opacity: 0.25, padding: 1 },
+        'glass-dark': { enabled: true, type: 'glass-dark', opacity: 0.7, padding: 1 },
+        outline: { enabled: true, type: 'outline-light', opacity: 0.35, padding: 0.5 },
+        'border-light': { enabled: true, type: 'border-light', padding: 0.5 },
+        'border-dark': { enabled: true, type: 'border-dark', padding: 0.5 },
+      };
+      batchIds.forEach(id => {
+        const current = state.imageOverlays.find(item => item.id === id)?.frame ?? defaultFrame;
+        state.updateImageOverlay(id, { frame: { ...current, ...presetFrames[preset], color: preset === 'border-dark' ? '#1e1e1e' : '#ffffff' } });
+      });
+      return;
+    }
     if (!overlay) {
       state.setImageStylePreset(preset);
       return;
@@ -107,15 +128,15 @@ export function StyleSection() {
       'glass-light': { enabled: true, type: 'glass-light', opacity: 0.25, padding: 1 },
       'glass-dark': { enabled: true, type: 'glass-dark', opacity: 0.7, padding: 1 },
       outline: { enabled: true, type: 'outline-light', opacity: 0.35, padding: 0.5 },
-      'border-light': { enabled: true, type: 'border-light', padding: 1 },
-      'border-dark': { enabled: true, type: 'border-dark', padding: 1 },
+      'border-light': { enabled: true, type: 'border-light', padding: 0.5 },
+      'border-dark': { enabled: true, type: 'border-dark', padding: 0.5 },
     };
     setFrame({ ...presetFrames[preset], color: preset === 'border-dark' ? '#1e1e1e' : '#ffffff' });
   };
 
   return (
     <SectionWrapper title="Style" defaultOpen={true}>
-      {needsTarget ? <p className="pb-2 text-xs text-muted-foreground">Select a layer on the canvas to edit its style.</p> : overlay ? <p className="pb-2 text-xs text-muted-foreground">Image layer style</p> : null}
+      {batchIds.length > 1 ? <p className="pb-2 text-xs text-muted-foreground">Applying style to {batchIds.length} selected assets.</p> : needsTarget ? <p className="pb-2 text-xs text-muted-foreground">Select a layer on the canvas to edit its style.</p> : overlay ? <p className="pb-2 text-xs text-muted-foreground">Image layer style</p> : null}
       <div className="space-y-3">
         <div className="grid grid-cols-3 gap-2 p-1">
           {stylePresets.map(({ value, label }) => {

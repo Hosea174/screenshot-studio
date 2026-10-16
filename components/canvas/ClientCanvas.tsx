@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
 import { useEditorStore, useImageStore, useEditorStoreSync } from "@/lib/store";
 import { rebaseCanvasGeometry } from "@/lib/store/canvas-layout";
 import { generatePattern } from "@/lib/patterns";
@@ -8,6 +8,7 @@ import { useResponsiveCanvasDimensions } from "@/hooks/useAspectRatioDimensions"
 import { generateNoiseTexture } from "@/lib/export/export-utils";
 import { MockupSceneRenderer } from "@/components/mockups/MockupRenderer";
 import { useDeviceUIStore } from "@/lib/store/device-ui";
+import { useEditorProjectSession } from "@/lib/editor-projects/session";
 import { useMotionSelection } from '@/lib/animation/editor';
 import { shouldIgnoreEditorShortcut } from "@/lib/editor-shortcuts";
 import { calculateCanvasDimensions } from "./utils/canvas-dimensions";
@@ -66,7 +67,6 @@ function CanvasRenderer({ image }: { image: HTMLImageElement }) {
     updateTextOverlay,
     updateImageOverlay,
     removeImageOverlay,
-    addImageOverlay,
     removeMockup,
     // Annotations
     annotations,
@@ -204,6 +204,14 @@ function CanvasRenderer({ image }: { image: HTMLImageElement }) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (shouldIgnoreEditorShortcut(e)) return;
+      const sendToBack = e.key === '[' || (e.code === 'BracketLeft' && !e.shiftKey);
+      const bringToFront = e.key === ']' || (e.code === 'BracketRight' && !e.shiftKey);
+      if (selectedOverlayId && (sendToBack || bringToFront) && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        updateImageOverlay(selectedOverlayId, { layer: sendToBack ? 'back' : 'front' });
+        return;
+      }
+
       if (useMotionSelection.getState().clipId && useImageStore.getState().showTimeline) return;
 
       // Delete selected overlay or main image (only when not typing)
@@ -241,33 +249,7 @@ function CanvasRenderer({ image }: { image: HTMLImageElement }) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [editorMode, isMainImageSelected, removeImageOverlay, removeMockup, selectedDeviceId, selectedOverlayId, selectedTextId, setSelectedDeviceId, setSelectedOverlayId, setIsMainImageSelected, setSelectedAnnotationId, setEditingScreenDeviceId]);
-
-  // Get selected overlay for toolbar positioning
-  const selectedOverlay = selectedOverlayId
-    ? imageOverlays.find(o => o.id === selectedOverlayId)
-    : null;
-
-  // Handle duplicate overlay
-  const handleDuplicateOverlay = () => {
-    if (!selectedOverlay) return;
-
-    const { id: _id, ...overlayWithoutId } = selectedOverlay;
-    addImageOverlay({
-      ...overlayWithoutId,
-      position: {
-        x: selectedOverlay.position.x + 30,
-        y: selectedOverlay.position.y + 30,
-      },
-    });
-  };
-
-  // Handle delete overlay
-  const handleDeleteOverlay = () => {
-    if (!selectedOverlayId) return;
-    removeImageOverlay(selectedOverlayId);
-    setSelectedOverlayId(null);
-  };
+  }, [editorMode, isMainImageSelected, removeImageOverlay, removeMockup, selectedDeviceId, selectedOverlayId, selectedTextId, updateImageOverlay, setSelectedDeviceId, setSelectedOverlayId, setIsMainImageSelected, setSelectedAnnotationId, setEditingScreenDeviceId]);
 
   useEffect(() => {
     if (backgroundNoise > 0) {
@@ -358,6 +340,15 @@ function CanvasRenderer({ image }: { image: HTMLImageElement }) {
 
   const setCanvasDimensions = useImageStore((s) => s.setCanvasDimensions);
   const prevDimensionsRef = useRef(useImageStore.getState().canvasDimensions);
+  const activeProjectId = useEditorProjectSession((s) => s.activeProjectId);
+  const prevProjectIdRef = useRef(activeProjectId);
+  useLayoutEffect(() => {
+    if (prevProjectIdRef.current === activeProjectId) return;
+    prevProjectIdRef.current = activeProjectId;
+    // The newly restored project's saved canvas size is the geometry's source
+    // coordinate space. Never scale it against the project we just left.
+    prevDimensionsRef.current = useImageStore.getState().canvasDimensions;
+  }, [activeProjectId]);
   useEffect(() => {
     if (!responsiveDimensions.measured) return;
     const prev = prevDimensionsRef.current;
@@ -368,7 +359,7 @@ function CanvasRenderer({ image }: { image: HTMLImageElement }) {
     }
     prevDimensionsRef.current = { canvasW, canvasH, framedW, framedH };
     setCanvasDimensions({ canvasW, canvasH, framedW, framedH });
-  }, [canvasW, canvasH, framedW, framedH, responsiveDimensions.measured, setCanvasDimensions, setScreenshot]);
+  }, [activeProjectId, canvasW, canvasH, framedW, framedH, responsiveDimensions.measured, setCanvasDimensions, setScreenshot]);
 
   const showFrame = frame.enabled && frame.type !== "none";
 
@@ -470,8 +461,6 @@ function CanvasRenderer({ image }: { image: HTMLImageElement }) {
             setIsMainImageSelected={setIsMainImageSelected}
             setSelectedTextId={setSelectedTextId}
             updateImageOverlay={updateImageOverlay}
-            onDuplicate={handleDuplicateOverlay}
-            onDelete={handleDeleteOverlay}
             canvasW={canvasW}
             canvasH={canvasH}
             onDragStateChange={setIsDraggingOverlay}
@@ -540,8 +529,6 @@ function CanvasRenderer({ image }: { image: HTMLImageElement }) {
           setIsMainImageSelected={setIsMainImageSelected}
           setSelectedTextId={setSelectedTextId}
           updateImageOverlay={updateImageOverlay}
-          onDuplicate={handleDuplicateOverlay}
-          onDelete={handleDeleteOverlay}
           canvasW={canvasW}
           canvasH={canvasH}
           onDragStateChange={setIsDraggingOverlay}

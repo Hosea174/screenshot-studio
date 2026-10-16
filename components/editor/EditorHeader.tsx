@@ -4,7 +4,6 @@ import * as React from "react";
 import { undoEditor, redoEditor } from '@/lib/animation/drag-history';
 import Link from "next/link";
 import Image from "next/image";
-import { NewTwitterIcon } from "hugeicons-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -56,9 +55,9 @@ import {
   ScaleSlider,
 } from "@/components/export";
 import { cn } from "@/lib/utils";
-import { GitHubStarButton } from "@/components/ui/github-star-button";
 import { EditorProjectMenu } from "@/components/editor/EditorProjectMenu";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { ImageHslPopover, NEUTRAL_IMAGE_HSL } from '@/components/controls/ImageHslPopover';
 import {
   hasVisibleMockups,
   shouldRenderSourceImage,
@@ -72,6 +71,7 @@ export function EditorHeader() {
     selectedAspectRatio,
     slides,
     uploadedImageUrl,
+    backgroundConfig,
     textOverlays,
     imageOverlays,
     editorMode,
@@ -88,6 +88,7 @@ export function EditorHeader() {
     toggleRulers,
     toggleGrid,
     setRulerInterval,
+    setBackgroundConfig,
   } = useImageStore();
   const [aspectRatioOpen, setAspectRatioOpen] = React.useState(false);
   const [exportOpen, setExportOpen] = React.useState(false);
@@ -121,9 +122,9 @@ export function EditorHeader() {
     return unsubscribe;
   }, []);
 
-  const handleUndo = React.useCallback(undoEditor, []);
+  const handleUndo = React.useCallback(() => undoEditor(), []);
 
-  const handleRedo = React.useCallback(redoEditor, []);
+  const handleRedo = React.useCallback(() => redoEditor(), []);
 
   // Keep history shortcuts mounted even when undo/delete empties the canvas.
   React.useEffect(() => {
@@ -192,14 +193,14 @@ export function EditorHeader() {
     <>
       <header
         className={cn(
-          "h-16 bg-background border-b border-foreground/10 grid grid-cols-[1fr_auto_1fr] items-center shrink-0",
-          isMobile ? "gap-1 px-2" : "gap-3 px-4"
+          "relative z-30 flex h-[68px] w-full shrink-0 items-center border-b border-foreground/10 bg-background",
+          isMobile ? "gap-2 px-2" : "gap-5 px-5"
         )}
       >
-        <div className="flex items-center h-8 justify-self-start min-w-0">
+        <div className={cn("flex min-w-0 shrink-0 items-center", isMobile ? "gap-1" : "gap-2.5")}>
           <Link
             href="/"
-            className="flex items-center gap-2.5 h-8 hover:opacity-80 transition-opacity shrink-0"
+            className="flex h-9 shrink-0 items-center gap-2.5 rounded-md pr-1 transition-opacity hover:opacity-80"
           >
             <Image
               src="/logo-mark.png"
@@ -209,7 +210,7 @@ export function EditorHeader() {
               className="h-8 w-8"
               priority
             />
-            <span className="hidden sm:inline font-semibold text-foreground text-sm tracking-tight leading-none">
+            <span className="hidden font-semibold text-foreground text-sm tracking-tight leading-none sm:inline">
               Screenshot Studio
             </span>
           </Link>
@@ -217,32 +218,30 @@ export function EditorHeader() {
           <EditorProjectMenu />
 
           {!isMobile ? (
-            <>
-              <div className="mx-2.5 h-4 w-px shrink-0 bg-foreground/10" aria-hidden />
-              <button
-                type="button"
-                onClick={() => setShowTemplates(!showTemplates)}
-                aria-expanded={showTemplates}
-                aria-label="Templates"
-                className={cn(
-                  "inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2",
-                  "text-sm font-medium leading-none transition-colors duration-150",
-                  showTemplates
-                    ? "text-foreground hover:text-foreground/70"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                <MagicWand01Icon size={14} className="shrink-0" />
-                <span>Templates</span>
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={() => setShowTemplates(!showTemplates)}
+              aria-expanded={showTemplates}
+              aria-haspopup="dialog"
+              aria-label="Templates"
+              className={cn(
+                "inline-flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-lg border px-3",
+                "text-sm font-medium leading-none transition-colors duration-150",
+                showTemplates
+                  ? "border-foreground/20 bg-muted text-foreground"
+                  : "border-foreground/10 text-muted-foreground hover:border-foreground/20 hover:bg-muted/70 hover:text-foreground"
+              )}
+            >
+              <MagicWand01Icon size={15} className="shrink-0" />
+              <span>Templates</span>
+            </button>
           ) : null}
         </div>
 
         <div
           className={cn(
-            "flex items-center justify-center justify-self-center",
-            isMobile ? "gap-1" : "gap-2.5"
+            "flex min-w-0 flex-1 items-center scrollbar-hide",
+            isMobile ? "justify-end gap-1 overflow-x-auto" : "justify-center gap-2.5 overflow-x-auto"
           )}
         >
           {showHistoryControls ? (
@@ -329,6 +328,14 @@ export function EditorHeader() {
           ) : null}
 
           <div className="flex items-center gap-1">
+            {backgroundConfig.type === 'image' && (
+              <ImageHslPopover
+                value={backgroundConfig.hsl ?? NEUTRAL_IMAGE_HSL}
+                onChange={hsl => setBackgroundConfig({ ...backgroundConfig, hsl })}
+                onReset={() => setBackgroundConfig({ ...backgroundConfig, hsl: undefined })}
+                label="Adjust background image color"
+              />
+            )}
             <Popover open={aspectRatioOpen} onOpenChange={setAspectRatioOpen}>
               <PopoverTrigger asChild>
                 <Button
@@ -554,19 +561,10 @@ export function EditorHeader() {
           ) : null}
         </div>
 
-        <div className="flex items-center gap-1 justify-self-end">
-          <Button variant="ghost" size="icon" aria-label="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)}>
+        <div className="flex shrink-0 items-center border-l border-foreground/10 pl-3">
+          <Button variant="ghost" size="icon" aria-label="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)} className="size-9 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground">
             <KeyboardIcon size={16} />
           </Button>
-          {!isMobile ? <GitHubStarButton compact /> : null}
-          <a
-            href="https://x.com/code_kartik"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center justify-center w-9 h-9 rounded-md text-muted-foreground transition-[color,filter] duration-150 hover:text-foreground "
-          >
-            <NewTwitterIcon className="h-[18px] w-[18px]" />
-          </a>
         </div>
       </header>
 
