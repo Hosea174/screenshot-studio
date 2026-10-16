@@ -7,9 +7,6 @@ const DB_VERSION = 1;
 const STORE_NAME = 'drafts';
 const DRAFT_KEY = 'screenshotstudio-draft';
 
-// Auto cleanup configuration
-const MAX_DRAFT_AGE_DAYS = 7;
-const MAX_DRAFT_AGE_MS = MAX_DRAFT_AGE_DAYS * 24 * 60 * 60 * 1000;
 
 export type PersistedImageState = OmitFunctions<ImageState> & {
   deviceScreenAssets?: Record<string, string>;
@@ -220,11 +217,11 @@ export async function migrateFromLocalStorage(): Promise<void> {
     const oldData = localStorage.getItem('stage-draft');
     if (oldData) {
       const draft = JSON.parse(oldData) as DraftStorage;
-      await saveDraft(draft.editorState, draft.imageState);
-      localStorage.removeItem('stage-draft');
+      const result = await saveDraft(draft.editorState, draft.imageState);
+      if (result.ok) localStorage.removeItem('stage-draft');
     }
   } catch {
-    try { localStorage.removeItem('stage-draft'); } catch { /* ignore */ }
+    // Keep the source intact if migration fails so it can be retried.
   }
 }
 
@@ -292,24 +289,10 @@ export async function autoCleanIndexedDB(): Promise<{
       return { cleaned: false };
     }
 
-    // 1. Drop drafts the user has clearly abandoned.
-    const draftAge = Date.now() - draft.timestamp;
-    if (draftAge > MAX_DRAFT_AGE_MS) {
-      await deleteDraft();
-      return { cleaned: true, reason: 'Draft expired' };
-    }
-
-    // 2. Drop drafts that could not be restored anyway.
-    if (!validateDraftIntegrity(draft)) {
-      await deleteDraft();
-      return { cleaned: true, reason: 'Corrupted data' };
-    }
-
-    // Deliberately no size-based cleanup here. This runs on the load path,
-    // before the draft is restored, so discarding a *valid* draft for being
-    // large destroys exactly the work of the users who load big images.
-    // Being over quota is handled where it actually happens — the write in
-    // saveDraft(), which reports a 'quota' failure instead of pre-guessing.
+    // Projects and their legacy source draft are retained until the user
+    // explicitly deletes them. Invalid records are reported but never silently
+    // removed because the browser may recover them after a transient issue.
+    if (!validateDraftIntegrity(draft)) return { cleaned: false, reason: 'Draft could not be validated; retained for recovery.' };
     return { cleaned: false };
   } catch (error) {
     // Never destroy the draft to recover from a transient read failure:

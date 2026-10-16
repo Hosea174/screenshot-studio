@@ -4,6 +4,7 @@ import { useImageStore } from "@/lib/store";
 import { useResponsiveCanvasDimensions } from "@/hooks/useAspectRatioDimensions";
 import { getBackgroundCSS } from "@/lib/constants/backgrounds";
 import { cn } from "@/lib/utils";
+import { useEffect } from "react";
 
 type CanvasStageShellProps = {
   children?: React.ReactNode;
@@ -30,6 +31,12 @@ export function CanvasStageShell({
   const backgroundConfig = useImageStore((s) => s.backgroundConfig);
   const { measured, width, height, originalWidth } =
     useResponsiveCanvasDimensions();
+  useEffect(() => {
+    if (!measured) return;
+    const state = useImageStore.getState();
+    const empty = !state.uploadedImageUrl && !state.imageOverlays.length && !state.textOverlays.length && !state.mockups.length;
+    if (!state.canvasDimensions || empty) state.setCanvasDimensions({ canvasW: width, canvasH: height, framedW: width, framedH: height });
+  }, [measured, width, height]);
   const backgroundStyle = showBackground
     ? getBackgroundCSS(backgroundConfig, 32)
     : undefined;

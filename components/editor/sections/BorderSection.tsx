@@ -4,6 +4,8 @@ import { useImageStore } from '@/lib/store';
 import { Slider } from '@/components/ui/slider';
 import { SectionWrapper } from './SectionWrapper';
 import { cn } from '@/lib/utils';
+import { editingClip, motionPose, previewPose } from '@/lib/animation/authoring';
+import { useMotionSelection } from '@/lib/animation/editor';
 
 const borderPresets = [
   { value: 0, label: 'Sharp' },
@@ -32,29 +34,44 @@ function BorderPreview({ radius }: { radius: number }) {
   );
 }
 
-function ScaleSlider() {
-  const imageScale = useImageStore((s) => s.imageScale);
-  const setImageScale = useImageStore((s) => s.setImageScale);
-
+function ScaleSlider({ value, onChange, disabled }: { value: number; onChange: (scale: number) => void; disabled?: boolean }) {
   return (
     <Slider
-      value={[imageScale / 100]}
-      onValueChange={(value) => setImageScale(Math.round(value[0] * 100))}
+      value={[value]}
+      onValueChange={(next) => onChange(next[0])}
       min={0.1}
       max={2}
       step={0.01}
       label="Scale"
-      valueDisplay={(imageScale / 100).toFixed(1)}
+      valueDisplay={value.toFixed(1)}
+      disabled={disabled}
     />
   );
 }
 
 export function BorderSection() {
-  const borderRadius = useImageStore((s) => s.borderRadius);
-  const setBorderRadius = useImageStore((s) => s.setBorderRadius);
+  useMotionSelection(s => s.draft);
+  const state = useImageStore();
+  const overlay = state.imageOverlays.find((item) => item.id === state.selectedOverlayId)
+    ?? (!state.uploadedImageUrl && state.editorMode !== 'device' && state.imageOverlays.length === 1 ? state.imageOverlays[0] : undefined);
+  const isPrimaryOverlay = Boolean(overlay && (overlay.inheritMainStyle || (!state.uploadedImageUrl && state.editorMode !== 'device' && state.imageOverlays.length === 1)));
+  const borderRadius = overlay ? (overlay.radius ?? (isPrimaryOverlay ? state.borderRadius : 0)) : state.borderRadius;
+  const needsTarget = !overlay && !state.uploadedImageUrl && state.editorMode !== 'device' && state.imageOverlays.length > 1;
+  const setBorderRadius = (radius: number) => overlay
+    ? state.updateImageOverlay(overlay.id, { radius })
+    : state.setBorderRadius(radius);
+  const baseScale = overlay ? (overlay.scale ?? (isPrimaryOverlay ? state.imageScale / 100 : 1)) : state.imageScale / 100;
+  const clip = editingClip(overlay?.id ?? 'asset');
+  const imageScale = baseScale * (clip ? motionPose(clip).scale : 1);
+  const setScale = (scale: number) => {
+    if (previewPose(overlay?.id ?? 'asset', { scale: scale / baseScale })) return;
+    if (overlay) state.updateImageOverlay(overlay.id, { scale });
+    else state.setImageScale(Math.round(scale * 100));
+  };
 
   return (
     <SectionWrapper title="Border" defaultOpen={true}>
+      {needsTarget ? <p className="pb-2 text-xs text-muted-foreground">Select a layer on the canvas to edit its corners and scale.</p> : overlay ? <p className="pb-2 text-xs text-muted-foreground">Image layer corners and scale</p> : null}
       <div className="space-y-3">
         <div className="grid grid-cols-3 gap-2 p-1">
           {borderPresets.map(({ value, label }) => {
@@ -64,6 +81,7 @@ export function BorderSection() {
                 key={value}
                 type="button"
                 onClick={() => setBorderRadius(value)}
+                disabled={needsTarget}
                 className="flex flex-col items-center gap-1.5 group"
               >
                 <div
@@ -92,13 +110,14 @@ export function BorderSection() {
         <Slider
           value={[borderRadius]}
           onValueChange={(value) => setBorderRadius(value[0])}
+          disabled={needsTarget}
           min={0}
           max={50}
           step={1}
           label="Radius"
           valueDisplay={borderRadius}
         />
-        <ScaleSlider />
+        <ScaleSlider value={imageScale} onChange={setScale} disabled={needsTarget} />
       </div>
     </SectionWrapper>
   );

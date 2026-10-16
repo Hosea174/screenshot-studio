@@ -1,8 +1,6 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useImageStore } from '@/lib/store';
 import { getAspectRatioPreset, calculateFitDimensions, getAspectRatioCSS } from '@/lib/aspect-ratio-utils';
-import { MOBILE_BREAKPOINT } from '@/hooks/use-mobile';
-import { TIMELINE_HEIGHT } from '@/lib/constants/editor-layout';
 
 export function useAspectRatioDimensions(options?: {
   maxWidth?: number;
@@ -47,26 +45,32 @@ export function useAspectRatioDimensions(options?: {
 
 export function useResponsiveCanvasDimensions() {
   const selectedAspectRatio = useImageStore((s) => s.selectedAspectRatio);
-  const showTimeline = useImageStore((s) => s.showTimeline);
-  const hasContent = useImageStore(
-    (s) => !!s.uploadedImageUrl || s.slides.length > 0
-  );
-  const [measuredViewport, setViewportSize] = useState<{ width: number; height: number } | null>(null);
-  const viewportSize = measuredViewport ?? { width: 1920, height: 1080 };
+  const [measuredViewport, setViewportSize] = useState<{
+    width: number;
+    height: number;
+    paddingX: number;
+    paddingY: number;
+  } | null>(null);
   const measured = measuredViewport !== null;
   
   useEffect(() => {
+    const viewport = document.querySelector<HTMLElement>('[data-canvas-viewport]');
+    if (!viewport) return;
+
     const updateViewportSize = () => {
+      const styles = window.getComputedStyle(viewport);
       setViewportSize({
-        width: window.innerWidth,
-        height: window.innerHeight,
+        width: viewport.clientWidth,
+        height: viewport.clientHeight,
+        paddingX: parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight),
+        paddingY: parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom),
       });
     };
-    
-    updateViewportSize();
 
-    window.addEventListener('resize', updateViewportSize);
-    return () => window.removeEventListener('resize', updateViewportSize);
+    updateViewportSize();
+    const observer = new ResizeObserver(updateViewportSize);
+    observer.observe(viewport);
+    return () => observer.disconnect();
   }, []);
   
   const dimensions = useMemo(() => {
@@ -74,37 +78,12 @@ export function useResponsiveCanvasDimensions() {
     if (!preset) {
       return { width: 1920, height: 1080, aspectRatio: '16/9', originalWidth: 1920, originalHeight: 1080, measured };
     }
-    
-    // On mobile the side panels are hidden inside sheets, so we should not
-    // subtract their desktop width (otherwise calculations go negative and
-    // the canvas collapses). This keeps the preview and export canvases in sync.
-    // Must match useIsMobile / EditorLayout (1024), not Tailwind md (768).
-    const isMobileViewport = viewportSize.width < MOBILE_BREAKPOINT;
-    // Panels are w-[260px] each (LeftEditPanel / RightSettingsPanel)
-    const sidePanelsWidth = isMobileViewport ? 0 : 520;
-    // Match stage chrome: p-3 (24) / md:p-6 (48). Keep a tiny gutter so the shell
-    // never clips against the panels.
-    const horizontalPadding = isMobileViewport ? 32 : 56;
-    // header (h-16 = 64) + stage vertical pad
-    let verticalPadding = isMobileViewport ? 120 : (showTimeline ? 72 : 100);
-    if (!isMobileViewport && showTimeline) {
-      verticalPadding += TIMELINE_HEIGHT;
-    }
-    // Desktop Animate chip docks under the stage (h-9 + bottom-4 + gap).
-    // Portrait ratios are height-bound, so without this the chip overlaps.
-    const reserveAnimateChip =
-      !isMobileViewport && hasContent && !showTimeline;
-    if (reserveAnimateChip) {
-      verticalPadding += 56;
-    }
 
-    const rawAvailableWidth = viewportSize.width - sidePanelsWidth - horizontalPadding;
-    const rawAvailableHeight = viewportSize.height - verticalPadding;
-
-    // Fit exactly to the stage viewport — no overscale then CSS max-width clamp
-    // (that combo was shrinking the empty upload frame).
-    const maxWidth = Math.max(rawAvailableWidth, 320);
-    const maxHeight = Math.max(rawAvailableHeight, isMobileViewport ? 320 : 160);
+    // The canvas viewport already shrinks when the timeline opens. Measure that
+    // element directly so the stage follows its real available space instead of
+    // subtracting a second, hardcoded timeline height from the browser window.
+    const maxWidth = Math.max((measuredViewport?.width ?? 1920) - (measuredViewport?.paddingX ?? 0), 160);
+    const maxHeight = Math.max((measuredViewport?.height ?? 1080) - (measuredViewport?.paddingY ?? 0), 160);
     
     const fitDimensions = calculateFitDimensions(
       preset.width,
@@ -122,11 +101,11 @@ export function useResponsiveCanvasDimensions() {
     };
   }, [
     selectedAspectRatio,
-    viewportSize.width,
-    viewportSize.height,
+    measuredViewport?.width,
+    measuredViewport?.height,
+    measuredViewport?.paddingX,
+    measuredViewport?.paddingY,
     measured,
-    hasContent,
-    showTimeline,
   ]);
   
   return dimensions;

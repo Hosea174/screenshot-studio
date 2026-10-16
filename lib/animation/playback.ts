@@ -1,3 +1,4 @@
+import { useMotionSelection } from './editor';
 import { useImageStore } from '@/lib/store';
 import { getClipInterpolatedProperties, getClipMaskAtTime } from './interpolation';
 import { DEFAULT_ANIMATABLE_PROPERTIES } from '@/types/animation';
@@ -10,6 +11,9 @@ export function applyAnimationFrame(time: number, reset = false) {
     return { ...DEFAULT_ANIMATABLE_PROPERTIES, ...state.perspective3D, ...state.camera, imageOpacity: state.imageOpacity };
   }
   const frame = getClipInterpolatedProperties(state.animationClips, state.timeline.tracks, time, state.animationBase ?? DEFAULT_ANIMATABLE_PROPERTIES);
+  const draft = useMotionSelection.getState().draft;
+  const draftClip = state.animationClips.find(c => c.id === draft?.clipId);
+  if (draft && draft.time === time && (draftClip?.target ?? 'asset') === 'asset') Object.assign(frame, draft.properties);
   const history = useImageStore.temporal.getState();
   const tracking = history.isTracking;
   if (tracking) history.pause();

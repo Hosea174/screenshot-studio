@@ -105,7 +105,7 @@ export function MinimizedMotionBar() {
 
       {/* Time Readout */}
       <span className="font-mono text-[11px] tabular-nums text-muted-foreground shrink-0 min-w-[70px]">
-        {playheadSec.toFixed(2)}s / {durationSec.toFixed(1)}s
+        {playheadSec.toFixed(2)}s / {durationSec.toFixed(2)}s
       </span>
 
       {/* Interactive Scrubber Seek Bar */}

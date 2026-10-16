@@ -13,7 +13,7 @@ Screenshot Studio is a browser editor for composing screenshots, device mockups,
 
 ## Scope and persistence
 
-The timeline targets desktop use with a pointer and keyboard. The existing mobile notice recommends a desktop device; this extension does not establish a separate mobile editor. Video audio is not mixed into exports. Uploaded video uses session-local blob URLs and must be added again in a new session. Saved motion presets persist in this browser's localStorage; they do not contain uploaded media or sync across devices.
+The timeline targets desktop use with a pointer and keyboard. The existing mobile notice recommends a desktop device; this extension does not establish a separate mobile editor. Video audio is not mixed into exports. Editor projects, including uploaded image and video media, autosave to browser IndexedDB and remain local to that browser profile. Saved motion presets persist separately in this browser's localStorage; projects and presets do not sync across devices.
 
 ## Incumbent visual authority
 

@@ -112,7 +112,7 @@ export function QuickTemplatesSection() {
   return (
     <SectionWrapper
       title="Quick Presets"
-      defaultOpen={true}
+      defaultOpen={false}
       action={
         <button
           onClick={handleRandom}

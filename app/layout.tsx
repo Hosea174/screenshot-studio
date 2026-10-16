@@ -437,7 +437,7 @@ export default async function RootLayout({
   const rootJsonLd = getRootJsonLd();
 
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="dark" suppressHydrationWarning>
       <meta name="msvalidate.01" content="A3B8CB50BBD78710971A13FA3EE1E544" />
       <link
         rel="alternate"

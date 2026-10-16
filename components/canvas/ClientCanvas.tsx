@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useEditorStore, useImageStore, useEditorStoreSync } from "@/lib/store";
+import { rebaseCanvasGeometry } from "@/lib/store/canvas-layout";
 import { generatePattern } from "@/lib/patterns";
 import { useResponsiveCanvasDimensions } from "@/hooks/useAspectRatioDimensions";
 import { generateNoiseTexture } from "@/lib/export/export-utils";
@@ -130,6 +131,8 @@ function CanvasRenderer({ image }: { image: HTMLImageElement }) {
 
   const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
   const [isDraggingMainImage, setIsDraggingMainImage] = useState(false);
+  const [isDraggingOverlay, setIsDraggingOverlay] = useState(false);
+  const [overlaySnapOffsets, setOverlaySnapOffsets] = useState<{ x: number; y: number } | null>(null);
   const [selectedBlurId, setSelectedBlurId] = useState<string | null>(null);
 
 
@@ -353,31 +356,19 @@ function CanvasRenderer({ image }: { image: HTMLImageElement }) {
     groupCenterY,
   } = dimensions;
 
-  // Store canvas dimensions so editor panels can calculate position presets
   const setCanvasDimensions = useImageStore((s) => s.setCanvasDimensions);
+  const prevDimensionsRef = useRef(useImageStore.getState().canvasDimensions);
   useEffect(() => {
-    setCanvasDimensions({ canvasW, canvasH, framedW, framedH });
-  }, [canvasW, canvasH, framedW, framedH, setCanvasDimensions]);
-
-  // Keep asset position proportionally stable when canvas container resizes
-  // (e.g. timeline minimized/maximized or browser window resized)
-  const prevDimensionsRef = useRef<{ canvasW: number; canvasH: number } | null>(null);
-  useEffect(() => {
-    if (prevDimensionsRef.current) {
-      const prev = prevDimensionsRef.current;
-      if (prev.canvasW > 0 && prev.canvasH > 0 && (prev.canvasW !== canvasW || prev.canvasH !== canvasH)) {
-        const scaleX = canvasW / prev.canvasW;
-        const scaleY = canvasH / prev.canvasH;
-        if (screenshot.offsetX !== 0 || screenshot.offsetY !== 0) {
-          setScreenshot({
-            offsetX: Math.round(screenshot.offsetX * scaleX),
-            offsetY: Math.round(screenshot.offsetY * scaleY),
-          });
-        }
-      }
+    if (!responsiveDimensions.measured) return;
+    const prev = prevDimensionsRef.current;
+    if (prev && prev.canvasW > 0 && prev.canvasH > 0 && (prev.canvasW !== canvasW || prev.canvasH !== canvasH)) {
+      const sx = canvasW / prev.canvasW;
+      const sy = canvasH / prev.canvasH;
+      rebaseCanvasGeometry(sx, sy);
     }
-    prevDimensionsRef.current = { canvasW, canvasH };
-  }, [canvasW, canvasH, screenshot.offsetX, screenshot.offsetY, setScreenshot]);
+    prevDimensionsRef.current = { canvasW, canvasH, framedW, framedH };
+    setCanvasDimensions({ canvasW, canvasH, framedW, framedH });
+  }, [canvasW, canvasH, framedW, framedH, responsiveDimensions.measured, setCanvasDimensions, setScreenshot]);
 
   const showFrame = frame.enabled && frame.type !== "none";
 
@@ -481,6 +472,10 @@ function CanvasRenderer({ image }: { image: HTMLImageElement }) {
             updateImageOverlay={updateImageOverlay}
             onDuplicate={handleDuplicateOverlay}
             onDelete={handleDeleteOverlay}
+            canvasW={canvasW}
+            canvasH={canvasH}
+            onDragStateChange={setIsDraggingOverlay}
+            onSnapOffsetsChange={setOverlaySnapOffsets}
             zIndex={10}
           />
         )}
@@ -547,6 +542,18 @@ function CanvasRenderer({ image }: { image: HTMLImageElement }) {
           updateImageOverlay={updateImageOverlay}
           onDuplicate={handleDuplicateOverlay}
           onDelete={handleDeleteOverlay}
+          canvasW={canvasW}
+          canvasH={canvasH}
+          onDragStateChange={setIsDraggingOverlay}
+          onSnapOffsetsChange={setOverlaySnapOffsets}
+        />
+
+        <SnapAlignmentGuides
+          canvasW={canvasW}
+          canvasH={canvasH}
+          offsetX={overlaySnapOffsets?.x ?? Number.POSITIVE_INFINITY}
+          offsetY={overlaySnapOffsets?.y ?? Number.POSITIVE_INFINITY}
+          isDragging={isDraggingOverlay}
         />
 
         <HTMLBlurRegionLayer

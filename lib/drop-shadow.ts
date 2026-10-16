@@ -38,3 +38,11 @@ export function buildDropShadowFilter(shadow: DropShadowInput): string {
     `drop-shadow(0px 0px ${blur * 0.5}px rgba(${r}, ${g}, ${b}, ${ambientOpacity}))`,
   ].join(" ");
 }
+
+
+export const SHADOW_PRESET_SETTINGS = {
+  none: { enabled: false, blur: 0, offsetX: 0, offsetY: 0, spread: 0, color: 'rgba(0,0,0,0.6)', opacity: 0 },
+  hug: { enabled: true, blur: 10, offsetX: 0, offsetY: 2, spread: 0, color: 'rgba(0,0,0,0.6)', opacity: .25 },
+  soft: { enabled: true, blur: 30, offsetX: 0, offsetY: 12, spread: 5, color: 'rgba(0,0,0,0.6)', opacity: .5 },
+  strong: { enabled: true, blur: 60, offsetX: 0, offsetY: 24, spread: 10, color: 'rgba(0,0,0,0.6)', opacity: .8 },
+};

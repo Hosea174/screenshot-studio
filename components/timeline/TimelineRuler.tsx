@@ -33,7 +33,7 @@ export function TimelineRuler({ width }: TimelineRulerProps) {
   const formatTickLabel = (ms: number): string => {
     const seconds = ms / 1000;
     if (seconds >= 1) {
-      return `${seconds.toFixed(seconds % 1 === 0 ? 0 : 1)}s`;
+      return `${Number(seconds.toFixed(2))}s`;
     }
     return `${ms}ms`;
   };

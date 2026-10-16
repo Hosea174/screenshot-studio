@@ -4,6 +4,8 @@ import * as React from "react"
 import * as SliderPrimitive from "@radix-ui/react-slider"
 
 import { cn } from "@/lib/utils"
+import { formatNumberText } from "@/lib/number-format"
+import { beginMotionDrag } from "@/lib/animation/drag-history"
 
 interface SliderProps extends React.ComponentProps<typeof SliderPrimitive.Root> {
   label?: string
@@ -21,9 +23,19 @@ function Slider({
   "aria-label": ariaLabel,
   "aria-labelledby": ariaLabelledBy,
   "aria-valuetext": ariaValueText,
+  onPointerDownCapture,
+  onPointerUp,
+  onPointerCancel,
+  onLostPointerCapture,
   ...props
 }: SliderProps) {
   const labelId = React.useId()
+  const historyFinish = React.useRef<(() => void) | null>(null)
+  const finishHistory = React.useCallback(() => {
+    historyFinish.current?.()
+    historyFinish.current = null
+  }, [])
+  React.useEffect(() => finishHistory, [finishHistory])
   const _values = React.useMemo(
     () =>
       Array.isArray(value)
@@ -51,7 +63,7 @@ function Slider({
             <span />
           )}
           <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-            {displayValue}
+            {formatNumberText(displayValue)}
           </span>
         </div>
       ) : null}
@@ -66,6 +78,13 @@ function Slider({
           "relative flex h-4 w-full touch-none cursor-grab select-none items-center active:cursor-grabbing max-[768px]:h-11",
           "data-disabled:opacity-50 data-[orientation=vertical]:h-full data-[orientation=vertical]:min-h-44 data-[orientation=vertical]:w-auto data-[orientation=vertical]:flex-col"
         )}
+        onPointerDownCapture={(event) => {
+          if (event.button === 0 && !historyFinish.current) historyFinish.current = beginMotionDrag()
+          onPointerDownCapture?.(event)
+        }}
+        onPointerUp={(event) => { onPointerUp?.(event); finishHistory() }}
+        onPointerCancel={(event) => { onPointerCancel?.(event); finishHistory() }}
+        onLostPointerCapture={(event) => { onLostPointerCapture?.(event); finishHistory() }}
         {...props}
       >
         <SliderPrimitive.Track
@@ -92,7 +111,7 @@ function Slider({
             )}
             aria-label={label ? undefined : ariaLabel}
             aria-labelledby={label ? labelId : ariaLabelledBy}
-            aria-valuetext={ariaValueText ?? (showMeta ? String(displayValue) : undefined)}
+            aria-valuetext={ariaValueText ?? (showMeta ? formatNumberText(displayValue) : undefined)}
           />
         ))}
       </SliderPrimitive.Root>

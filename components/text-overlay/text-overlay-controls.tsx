@@ -6,6 +6,7 @@ import { Delete02Icon, ViewIcon, ViewOffSlashIcon, Add01Icon, TextIcon } from 'h
 import { fontFamilies, getAvailableFontWeights, getFontCSS } from '@/lib/constants/fonts';
 import { cn } from '@/lib/utils';
 import { Slider } from '@/components/ui/slider';
+import { roundToTwoDecimals } from '@/lib/number-format';
 
 const QUICK_COLORS = [
   '#ffffff', '#000000', '#ef4444', '#f97316',
@@ -273,7 +274,7 @@ export const TextOverlayControls = () => {
                     onChange={(event) => {
                       const value = event.currentTarget.valueAsNumber;
                       if (Number.isFinite(value)) updateTextOverlay(selectedOverlay.id, {
-                        position: { ...selectedOverlay.position, [axis]: Math.min(100, Math.max(0, value)) },
+                        position: { ...selectedOverlay.position, [axis]: roundToTwoDecimals(Math.min(100, Math.max(0, value))) },
                       });
                     }}
                     className="h-8 min-w-0 w-full rounded-md border border-border bg-background px-2 text-foreground"

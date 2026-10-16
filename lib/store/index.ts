@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { SHADOW_PRESET_SETTINGS } from "@/lib/drop-shadow";
 import { create } from "zustand";
 import { shallow } from "zustand/shallow";
 import { temporal } from "zundo";
@@ -21,6 +22,9 @@ import {
 } from "@/lib/device-mockups/layouts";
 import type { TimelineState, AnimationTrack, Keyframe, AnimatableProperties, AnimationClip, EasingFunction } from "@/types/animation";
 import { getClipInterpolatedProperties } from '@/lib/animation/interpolation';
+import { insertPropertyKey, previewPose } from '@/lib/animation/authoring';
+import { beginMotionDrag } from '@/lib/animation/drag-history';
+import { mediaTimelineDuration } from '@/lib/export/video-timing';
 import { retimeClipTracks, clampClipDuration } from '@/lib/animation/retiming';
 import { useMotionLibrary, useMotionSelection, createCustomPreset, splitPropertyTracks, PROPERTY_CONTROLS } from '@/lib/animation/editor';
 import { DEFAULT_ANIMATABLE_PROPERTIES, DEFAULT_TIMELINE_STATE } from "@/types/animation";
@@ -34,6 +38,7 @@ import { presets as visualPresets, type PresetConfig } from "@/lib/constants/pre
 import {
   TEMPLATE_DEMO_IMAGE_NAME,
   TEMPLATE_DEMO_IMAGE_URL,
+  isTemplateDemoMedia,
 } from "@/lib/templates/demo-media";
 import {
   getImageTemplateById,
@@ -102,6 +107,11 @@ export interface ImageOverlay {
   mediaHeight?: number;
   startTime?: number;
   trimStart?: number;
+  /** Exclusive source endpoint in seconds; omitted means the source's end. */
+  trimEnd?: number;
+  /** Split segments retain the original video's inherited design controls. */
+  inheritMainStyle?: boolean;
+  videoTrackId?: string;
   playbackRate?: number;
   loop?: boolean;
   id: string;
@@ -119,6 +129,10 @@ export interface ImageOverlay {
   tilt?: ImageOverlayTilt;
   shadow?: ImageShadow;
   radius?: number;
+  /** Optional screenshot-style frame applied to this media layer. */
+  frame?: ImageBorder;
+  /** Base scale controlled by the Design panel, independent of animation scale. */
+  scale?: number;
 }
 
 export type BlurRegionStyle = 'blur' | 'mosaic';
@@ -439,6 +453,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 }));
 
+type EditorSnapshot = OmitFunctions<EditorState>;
+let syncingEditorStoreFromImage = false;
+
+function snapshotEditorStore(state = useEditorStore.getState()): EditorSnapshot {
+  const { screenshot, background, shadow, pattern, frame, canvas, noise } = state;
+  return { screenshot, background, shadow, pattern, frame, canvas, noise };
+}
+
+function editorSnapshotsEqual(a: EditorSnapshot, b: EditorSnapshot): boolean {
+  return (Object.keys(a) as (keyof EditorSnapshot)[]).every((key) => shallow(a[key], b[key]));
+}
+
 // Sync hook to keep editor store in sync with image store
 export function useEditorStoreSync() {
   const imageStore = useImageStore();
@@ -446,6 +472,7 @@ export function useEditorStoreSync() {
 
   // Sync when image store changes
   React.useEffect(() => {
+    syncingEditorStoreFromImage = true;
     // Sync screenshot src
     if (imageStore.uploadedImageUrl !== editorStore.screenshot.src) {
       editorStore.setScreenshot({ src: imageStore.uploadedImageUrl });
@@ -579,6 +606,20 @@ export function useEditorStoreSync() {
     if (editorStore.canvas.aspectRatio !== canvasAspectRatio) {
       editorStore.setCanvas({ aspectRatio: canvasAspectRatio });
     }
+
+    // Keep the legacy editor controls represented in the main undo history,
+    // without recording derived sync updates as separate user edits.
+    const history = useImageStore.temporal.getState();
+    const tracking = history.isTracking;
+    if (tracking) history.pause();
+    try {
+      const editorSnapshot = snapshotEditorStore();
+      const currentSnapshot = useImageStore.getState().editorSnapshot;
+      if (!editorSnapshotsEqual(currentSnapshot, editorSnapshot)) useImageStore.setState({ editorSnapshot });
+    } finally {
+      if (tracking) history.resume();
+      syncingEditorStoreFromImage = false;
+    }
   }, [
     imageStore.uploadedImageUrl,
     imageStore.imageScale,
@@ -592,6 +633,7 @@ export function useEditorStoreSync() {
 
 // Re-export existing ImageState interface and store
 export interface ImageState {
+  editorSnapshot: EditorSnapshot;
   uploadedImageUrl: string | null;
   imageName: string | null;
   selectedGradient: GradientKey;
@@ -610,6 +652,7 @@ export interface ImageState {
   imageOpacity: number;
   imageClipPath: string | null;
   imageScale: number;
+  mainImagePlacement: { offsetX: number; offsetY: number; rotation: number };
   imageBorder: ImageBorder;
   imageShadow: ImageShadow;
   imageStylePreset: ImageStylePreset;
@@ -787,8 +830,35 @@ export interface ImageState {
   // Layer Selection State
   selectedOverlayId: string | null;
   isMainImageSelected: boolean;
+  /** Last canvas asset targeted by transform controls; excluded from undo history. */
+  lastSelectedAssetId: string | null;
   setSelectedOverlayId: (id: string | null) => void;
   setIsMainImageSelected: (selected: boolean) => void;
+}
+
+function resolveTemplateMedia(imageState: Pick<ImageState, 'uploadedImageUrl' | 'imageName' | 'imageOverlays' | 'selectedOverlayId'>) {
+  const screenshot = useEditorStore.getState().screenshot;
+  const uploaded = imageState.uploadedImageUrl && !isTemplateDemoMedia(imageState.uploadedImageUrl, imageState.imageName)
+    && imageState.uploadedImageUrl !== TEMPLATE_DEMO_IMAGE_URL
+    ? imageState.uploadedImageUrl
+    : null;
+  const screenshotSource = screenshot?.src && screenshot.src !== TEMPLATE_DEMO_IMAGE_URL
+    ? screenshot.src
+    : null;
+  const overlay = imageState.imageOverlays.find((item) => item.id === imageState.selectedOverlayId && item.isVisible && !item.src.includes('overlay-shadow'))
+    ?? imageState.imageOverlays.find((item) => item.isVisible && !item.src.includes('overlay-shadow'));
+  const overlaySource = overlay?.mediaType === 'video'
+    ? overlay.poster ?? null
+    : overlay?.src ?? null;
+  const mainSource = uploaded ?? screenshotSource;
+
+  return {
+    mainSource,
+    overlay,
+    overlaySource,
+    assetSource: mainSource ?? overlaySource,
+    hasUserMedia: Boolean(mainSource || overlay),
+  };
 }
 
 export const useImageStore = create<ImageState>()(
@@ -798,7 +868,7 @@ export const useImageStore = create<ImageState>()(
 
     slideshow: {
       enabled: true,
-      defaultDuration: 2,
+      defaultDuration: 5,
       animation: "fade", // 'none' | 'fade' | 'slide'
     },
     setSlideshow: (updates) => {
@@ -832,6 +902,8 @@ export const useImageStore = create<ImageState>()(
     imageOpacity: 1,
     imageClipPath: null,
     imageScale: 100,
+    mainImagePlacement: { offsetX: 0, offsetY: 0, rotation: 0 },
+    editorSnapshot: snapshotEditorStore(),
     imageBorder: {
       enabled: false,
       width: 8,
@@ -1225,9 +1297,12 @@ export const useImageStore = create<ImageState>()(
       const id = `overlay-${Date.now()}-${Math.random()
         .toString(36)
         .substr(2, 9)}`;
+      const finish = beginMotionDrag();
       set((state) => ({
         imageOverlays: [...state.imageOverlays, { blur: 0, ...overlay, id }],
       }));
+      if (overlay.mediaType === 'video') get().setTimelineDuration(mediaTimelineDuration(get().imageOverlays));
+      finish();
     },
 
     updateImageOverlay: (id, updates) => {
@@ -1436,12 +1511,8 @@ export const useImageStore = create<ImageState>()(
     },
 
     setShadowPreset: (preset: ShadowPreset) => {
-      const shadowMap: Record<ShadowPreset, ImageShadow> = {
-        'none': { enabled: false, blur: 0, offsetX: 0, offsetY: 0, spread: 0, color: 'rgba(0,0,0,0.6)', opacity: 0 },
-        'hug': { enabled: true, blur: 10, offsetX: 0, offsetY: 2, spread: 0, color: 'rgba(0,0,0,0.6)', opacity: 0.25 },
-        'soft': { enabled: true, blur: 30, offsetX: 0, offsetY: 12, spread: 5, color: 'rgba(0,0,0,0.6)', opacity: 0.5 },
-        'strong': { enabled: true, blur: 60, offsetX: 0, offsetY: 24, spread: 10, color: 'rgba(0,0,0,0.6)', opacity: 0.8 },
-      };
+      const shadowMap = SHADOW_PRESET_SETTINGS;
+
       set({
         shadowPreset: preset,
         imageShadow: shadowMap[preset],
@@ -1450,11 +1521,13 @@ export const useImageStore = create<ImageState>()(
 
     applyVisualPreset: (preset, options = {}) => {
       trackPresetApply(preset.id, preset.name);
-      const shouldUseDemoMedia = !get().uploadedImageUrl;
-      const mediaUrl = get().uploadedImageUrl ?? TEMPLATE_DEMO_IMAGE_URL;
+      const templateMedia = resolveTemplateMedia(get());
+      const shouldUseDemoMedia = !templateMedia.hasUserMedia;
+      const mediaUrl = templateMedia.assetSource ?? TEMPLATE_DEMO_IMAGE_URL;
+      const shouldSetScreenshot = shouldUseDemoMedia
+        || (options.scene?.kind === 'screenshot' && Boolean(templateMedia.mainSource));
 
       set((state) => {
-        const mediaUrl = state.uploadedImageUrl ?? TEMPLATE_DEMO_IMAGE_URL;
         const mediaName = state.imageName ?? TEMPLATE_DEMO_IMAGE_NAME;
         const retainedOverlays = state.imageOverlays.filter(
           (overlay) => !(typeof overlay.src === "string" && overlay.src.includes("overlay-shadow")),
@@ -1534,7 +1607,7 @@ export const useImageStore = create<ImageState>()(
         };
       });
 
-      if (shouldUseDemoMedia || options.scene?.kind === "screenshot") {
+      if (shouldSetScreenshot) {
         const placement = options.scene?.kind === "screenshot"
           ? options.scene.placement ?? { offsetX: 0, offsetY: 0, rotation: 0 }
           : null;
@@ -1553,7 +1626,12 @@ export const useImageStore = create<ImageState>()(
         const animation = buildAnimatedTemplateTimeline(template);
         if (!animation) return;
         const state = get();
-        const mediaUrl = state.uploadedImageUrl ?? TEMPLATE_DEMO_IMAGE_URL;
+        const templateMedia = resolveTemplateMedia(state);
+        const mediaUrl = templateMedia.mainSource ?? TEMPLATE_DEMO_IMAGE_URL;
+        const overlayTarget = !templateMedia.mainSource ? templateMedia.overlay : null;
+        const appliedClip = overlayTarget
+          ? { ...animation.clip, target: overlayTarget.id }
+          : animation.clip;
         const canvasWidth = state.canvasDimensions
           ? Math.min(state.canvasDimensions.canvasW, state.canvasDimensions.canvasH * 9 / 16)
           : 450;
@@ -1562,7 +1640,7 @@ export const useImageStore = create<ImageState>()(
         const { perspective, rotateX, rotateY, rotateZ, translateX, translateY, scale } = initial;
         trackPresetApply(`animated:${template.id}`, template.name);
         set({
-          ...(!state.uploadedImageUrl ? { uploadedImageUrl: mediaUrl, imageName: TEMPLATE_DEMO_IMAGE_NAME } : {}),
+          ...(!templateMedia.hasUserMedia ? { uploadedImageUrl: mediaUrl, imageName: TEMPLATE_DEMO_IMAGE_NAME } : {}),
           selectedAspectRatio: '9_16',
           customDimensions: null,
           imageScale,
@@ -1573,7 +1651,7 @@ export const useImageStore = create<ImageState>()(
           mockups: [],
           activeDeviceLayoutId: null,
           deviceLayoutSnapshot: null,
-          animationClips: [animation.clip],
+          animationClips: [appliedClip],
           animationBase: { ...DEFAULT_ANIMATABLE_PROPERTIES },
           camera: { cameraX: 0, cameraY: 0, cameraZoom: 1, cameraRotateX: 0, cameraRotateY: 0, cameraRotateZ: 0 },
           timeline: {
@@ -1586,8 +1664,10 @@ export const useImageStore = create<ImageState>()(
           showTemplates: false,
         });
         useEditorStore.getState().setCanvas({ padding: 0 });
-        useEditorStore.getState().setScreenshot({ src: mediaUrl, offsetX: 0, offsetY: 0, rotation: 0, scale: imageScale / 100 });
-        useMotionSelection.getState().selectClip(animation.clip.id);
+        if (!overlayTarget) {
+          useEditorStore.getState().setScreenshot({ src: mediaUrl, offsetX: 0, offsetY: 0, rotation: 0, scale: imageScale / 100 });
+        }
+        useMotionSelection.getState().selectClip(appliedClip.id);
         return;
       }
 
@@ -1601,8 +1681,13 @@ export const useImageStore = create<ImageState>()(
         : visualPreset.imageBorder;
 
       trackPresetApply(`animated:${template.id}`, template.name);
-      const shouldUseDemoMedia = !get().uploadedImageUrl;
-      const mediaUrl = get().uploadedImageUrl ?? TEMPLATE_DEMO_IMAGE_URL;
+      const templateMedia = resolveTemplateMedia(get());
+      const shouldUseDemoMedia = !templateMedia.hasUserMedia;
+      const mediaUrl = templateMedia.mainSource ?? TEMPLATE_DEMO_IMAGE_URL;
+      const overlayTarget = !templateMedia.mainSource ? templateMedia.overlay : null;
+      const appliedClip = overlayTarget
+        ? { ...animation.clip, target: overlayTarget.id }
+        : animation.clip;
 
       set((state) => {
         const retainedOverlays = state.imageOverlays.filter(
@@ -1654,7 +1739,7 @@ export const useImageStore = create<ImageState>()(
           mockups: [],
           activeDeviceLayoutId: null,
           deviceLayoutSnapshot: null,
-          animationClips: [animation.clip],
+          animationClips: [appliedClip],
           animationBase: { ...DEFAULT_ANIMATABLE_PROPERTIES },
           camera: { cameraX: 0, cameraY: 0, cameraZoom: 1, cameraRotateX: 0, cameraRotateY: 0, cameraRotateZ: 0 },
           timeline: {
@@ -1671,15 +1756,20 @@ export const useImageStore = create<ImageState>()(
       const placement = imageTemplate?.scene.kind === "screenshot"
         ? imageTemplate.scene.placement
         : undefined;
-      useEditorStore.getState().setScreenshot({
-        src: mediaUrl,
-        offsetX: placement?.offsetX ?? 0,
-        offsetY: placement?.offsetY ?? 0,
-        rotation: placement?.rotation ?? 0,
-      });
+      if (!overlayTarget) {
+        useEditorStore.getState().setScreenshot({
+          src: mediaUrl,
+          offsetX: placement?.offsetX ?? 0,
+          offsetY: placement?.offsetY ?? 0,
+          rotation: placement?.rotation ?? 0,
+        });
+      }
+      useMotionSelection.getState().selectClip(appliedClip.id);
     },
 
     setPerspective3D: (perspective: Partial<ImageState["perspective3D"]>) => {
+      const target = get().selectedOverlayId ?? 'asset';
+      if (previewPose(target, perspective)) return;
       const currentPerspective = get().perspective3D;
       set({
         perspective3D: {
@@ -1688,10 +1778,6 @@ export const useImageStore = create<ImageState>()(
         },
       });
 
-      const state = get();
-      if (!state.timeline.isPlaying && (state.activeRightPanelTab === 'animate' || state.animationClips.length > 0)) {
-        state.recordPropertyChanges(perspective);
-      }
     },
 
     setImageFilter: (key: keyof ImageFilters, value: number) => {
@@ -1906,18 +1992,22 @@ export const useImageStore = create<ImageState>()(
     },
 
     setPlayhead: (time) => {
+      if (!Number.isFinite(time)) return;
+      if (time !== get().timeline.playhead) useMotionSelection.getState().discardPose();
       set((state) => ({
         timeline: { ...state.timeline, playhead: Math.max(0, Math.min(time, state.timeline.duration)) },
       }));
     },
 
     togglePlayback: () => {
+      useMotionSelection.getState().discardPose();
       set((state) => ({
         timeline: { ...state.timeline, playhead: !state.timeline.isPlaying && state.timeline.playhead >= state.timeline.duration ? 0 : state.timeline.playhead, isPlaying: !state.timeline.isPlaying },
       }));
     },
 
     startPlayback: () => {
+      useMotionSelection.getState().discardPose();
       set((state) => ({
         timeline: { ...state.timeline, isPlaying: true },
       }));
@@ -1944,21 +2034,17 @@ export const useImageStore = create<ImageState>()(
     },
 
     updateKeyframe: (trackId, keyframeId, updates) => {
-      set((state) => ({
-        timeline: {
-          ...state.timeline,
-          tracks: state.timeline.tracks.map((track) =>
-            track.id === trackId && !track.isLocked
-              ? {
-                  ...track,
-                  keyframes: track.keyframes.map((kf) =>
-                    kf.id === keyframeId ? { ...kf, ...updates, properties: { ...kf.properties, ...updates.properties } } : kf
-                  ),
-                }
-              : track
-          ),
-        },
-      }));
+      if (updates.time !== undefined && !Number.isFinite(updates.time)) return;
+      set(state => ({ timeline: { ...state.timeline, tracks: state.timeline.tracks.map(track => {
+        if (track.id !== trackId || track.isLocked) return track;
+        const old = track.keyframes.find(k => k.id === keyframeId);
+        if (!old) return track;
+        const clip = state.animationClips.find(c => c.id === track.clipId);
+        const time = Math.round(Math.max(clip?.startTime ?? 0, Math.min(clip ? clip.startTime + clip.duration : state.timeline.duration, updates.time ?? old.time)));
+        const collision = track.keyframes.find(k => k.id !== keyframeId && Math.abs(k.time - time) < 1);
+        const key = { ...collision, ...old, ...updates, time, properties: { ...collision?.properties, ...old.properties, ...updates.properties } };
+        return { ...track, keyframes: [...track.keyframes.filter(k => k.id !== keyframeId && k.id !== collision?.id), key].sort((a,b) => a.time-b.time) };
+      }) } }));
     },
 
     removeKeyframe: (trackId, keyframeId) => {
@@ -2028,6 +2114,7 @@ export const useImageStore = create<ImageState>()(
     },
 
     setTimelineDuration: (duration) => {
+      if (!Number.isFinite(duration)) return;
       set((state) => {
         const newDuration = Math.max(500, duration);
         const clampedClips = state.animationClips.map(clip => clampClipDuration(clip, newDuration));
@@ -2048,34 +2135,13 @@ export const useImageStore = create<ImageState>()(
     // Animation clips
     addAnimationClip: (presetId, startTime, target = 'asset') => {
       const current3D = get().perspective3D;
-      const editorScreenshot = useEditorStore.getState().screenshot;
-      const canvasDim = get().canvasDimensions;
-      const canvasW = canvasDim?.canvasW || 800;
-      const canvasH = canvasDim?.canvasH || 600;
-      const poseTranslateX = current3D.translateX !== 0
-        ? current3D.translateX
-        : Math.round(((editorScreenshot.offsetX || 0) / canvasW) * 100 * 10) / 10;
-      const poseTranslateY = current3D.translateY !== 0
-        ? current3D.translateY
-        : Math.round(((editorScreenshot.offsetY || 0) / canvasH) * 100 * 10) / 10;
-      const poseScale = current3D.scale !== 1 ? current3D.scale : (editorScreenshot.scale ?? 1);
       const currentAssetPose: AnimatableProperties = {
-        ...DEFAULT_ANIMATABLE_PROPERTIES,
-        ...current3D,
-        ...get().camera,
-        translateX: poseTranslateX,
-        translateY: poseTranslateY,
-        scale: poseScale,
-        rotateZ: current3D.rotateZ !== 0 ? current3D.rotateZ : (editorScreenshot.rotation ?? 0),
-        imageOpacity: get().imageOpacity,
+        ...DEFAULT_ANIMATABLE_PROPERTIES, ...current3D, ...get().camera, imageOpacity: get().imageOpacity,
       };
-      if (presetId === 'custom-asset' && (editorScreenshot.offsetX || editorScreenshot.offsetY)) {
-        useEditorStore.getState().setScreenshot({ offsetX: 0, offsetY: 0 });
-      }
       const preset = presetId === 'custom-asset' || presetId === 'custom-camera'
         ? createCustomPreset(
             presetId === 'custom-camera' ? 'camera' : 'asset',
-            get().animationClips.length > 0
+            get().animationClips.some(c => (c.target ?? 'asset') === target)
               ? getClipInterpolatedProperties(get().animationClips, get().timeline.tracks, startTime, target === 'asset' ? get().animationBase : DEFAULT_ANIMATABLE_PROPERTIES, target)
               : target === 'asset'
                 ? currentAssetPose
@@ -2146,6 +2212,7 @@ export const useImageStore = create<ImageState>()(
     },
 
     removeAnimationClip: (clipId) => {
+      if (useMotionSelection.getState().clipId === clipId) useMotionSelection.getState().selectClip(null);
       set((state) => ({
         animationClips: state.animationClips.filter((clip) => clip.id !== clipId),
         timeline: {
@@ -2157,6 +2224,7 @@ export const useImageStore = create<ImageState>()(
     },
 
     clearAnimationClips: () => {
+      useMotionSelection.getState().selectClip(null);
       set({
         animationClips: [],
         timeline: { ...DEFAULT_TIMELINE_STATE },
@@ -2165,86 +2233,13 @@ export const useImageStore = create<ImageState>()(
 
     recordPropertyChange: (property, value, easing = 'ease-in-out-cubic') => {
       const state = get();
-      if (state.timeline.isPlaying) return false;
-      if (state.animationClips.length === 0 && state.timeline.tracks.length === 0) return false;
-
-      const selectedClipId = useMotionSelection.getState().clipId;
-      const clip = state.animationClips.find(c => c.id === selectedClipId)
-        || state.animationClips.find(c => state.timeline.playhead >= c.startTime && state.timeline.playhead <= c.startTime + c.duration)
-        || state.animationClips[0];
-      if (!clip) return false;
-
-      const targetTime = Math.round(
-        Math.max(clip.startTime, Math.min(clip.startTime + clip.duration, state.timeline.playhead))
-      );
-
-      const track = state.timeline.tracks.find(
-        t => t.clipId === clip.id && t.keyframes.some(k => property in k.properties)
-      );
-      if (track?.isLocked) return false;
-
-      if (track) {
-        const existing = track.keyframes.find(k => Math.abs(k.time - targetTime) <= 60);
-        if (existing) {
-          get().updateKeyframe(track.id, existing.id, {
-            properties: { [property]: value },
-          });
-          return true;
-        }
-        get().addKeyframe(track.id, {
-          time: targetTime,
-          properties: { [property]: value },
-          easing,
-        });
-        return true;
-      }
-
-      // Track doesn't exist yet for this property on this clip:
-      const control = PROPERTY_CONTROLS.find(p => p.key === property);
-      const trackName = control?.label ?? property;
-      const trackType = control?.group === 'camera' ? 'camera' : 'transform';
-      const baseValue = (clip.target && clip.target !== 'asset'
-        ? DEFAULT_ANIMATABLE_PROPERTIES
-        : get().animationBase)[property];
-
-      const keys: Keyframe[] = [
-        {
-          id: `kf-${Date.now()}-1`,
-          time: clip.startTime,
-          properties: { [property]: baseValue },
-          easing,
-        },
-        {
-          id: `kf-${Date.now()}-2`,
-          time: clip.startTime + clip.duration,
-          properties: { [property]: baseValue },
-          easing,
-        },
-      ];
-
-      const existingAtBoundary = keys.find(k => Math.abs(k.time - targetTime) <= 60);
-      if (existingAtBoundary) {
-        existingAtBoundary.properties = { [property]: value };
-      } else {
-        keys.push({
-          id: `kf-${Date.now()}-3`,
-          time: targetTime,
-          properties: { [property]: value },
-          easing,
-        });
-      }
-
-      keys.sort((a, b) => a.time - b.time);
-
-      get().addTrack({
-        name: trackName,
-        type: trackType,
-        clipId: clip.id,
-        isLocked: false,
-        isVisible: true,
-        keyframes: keys,
-      });
-
+      if (state.timeline.isPlaying || !Number.isFinite(value)) return false;
+      const target = state.selectedOverlayId ?? 'asset';
+      const clip = state.animationClips.find(c => c.id === useMotionSelection.getState().clipId && (c.target ?? 'asset') === target);
+      if (!clip || state.timeline.playhead < clip.startTime || state.timeline.playhead > clip.startTime + clip.duration) return false;
+      const locked = state.timeline.tracks.some(t => t.clipId === clip.id && t.isLocked && t.keyframes.some(k => property in k.properties));
+      if (locked) return false;
+      insertPropertyKey(clip, property, value, state.timeline.playhead, easing);
       return true;
     },
 
@@ -2381,24 +2376,49 @@ export const useImageStore = create<ImageState>()(
 
     selectedOverlayId: null,
     isMainImageSelected: false,
+    lastSelectedAssetId: null,
     setSelectedOverlayId: (id: string | null) =>
       set((state) => ({
         selectedOverlayId: id,
         isMainImageSelected: id ? false : state.isMainImageSelected,
+        ...(id ? { lastSelectedAssetId: id } : {}),
       })),
     setIsMainImageSelected: (selected: boolean) =>
       set((state) => ({
         isMainImageSelected: selected,
         selectedOverlayId: selected ? null : state.selectedOverlayId,
+        ...(selected ? { lastSelectedAssetId: 'asset' } : {}),
       })),
   }), {
     // Layout measurements change on mount/resize and must not erase redo history.
-    partialize: ({ selectedOverlayId: _overlay, isMainImageSelected: _main, canvasDimensions: _dimensions, ...state }) => ({ ...state, timeline: { ...state.timeline, playhead: 0, isPlaying: false } }),
+    partialize: ({ selectedOverlayId: _overlay, isMainImageSelected: _main, lastSelectedAssetId: _lastSelected, canvasDimensions: _dimensions, showTimeline: _timeline, activeRightPanelTab: _panel, showTemplates: _templates, showRulers: _rulers, showGrid: _grid, ...state }) => ({ ...state, timeline: { ...state.timeline, playhead: 0, isPlaying: false, zoom: 1, isLooping: true } }),
     equality: (past, current) => shallow({ ...past, timeline: null }, { ...current, timeline: null }) && shallow(past.timeline, current.timeline),
   })
 );
 
-// Selection is transient: deleting, resetting, restoring, or undoing layers must
+// Keep document data across development module replacement. New action functions
+// always come from this module; only data is carried forward from the prior store.
+if (process.env.NODE_ENV === 'development') {
+  const runtime = globalThis as typeof globalThis & {
+    __studioDevDocument?: { image: ImageState; editor: EditorState; unsubscribe: () => void };
+  };
+  const previous = runtime.__studioDevDocument;
+  if (previous) {
+    previous.unsubscribe();
+    const dataOnly = (state: object) => Object.fromEntries(Object.entries(state).filter(([, value]) => typeof value !== 'function'));
+    useImageStore.setState(dataOnly(previous.image));
+    useEditorStore.setState(dataOnly(previous.editor));
+    useImageStore.temporal.getState().clear();
+  }
+  const remember = () => {
+    runtime.__studioDevDocument = { image: useImageStore.getState(), editor: useEditorStore.getState(), unsubscribe: () => { stopImage(); stopEditor(); } };
+  };
+  const stopImage = useImageStore.subscribe(remember);
+  const stopEditor = useEditorStore.subscribe(remember);
+  remember();
+}
+
+// Editor selection is transient: deleting, resetting, restoring, or undoing layers must
 // never leave controls or keyboard shortcuts targeting a removed image.
 useImageStore.subscribe((state) => {
   const selectedClip = useMotionSelection.getState().clipId;
@@ -2408,5 +2428,44 @@ useImageStore.subscribe((state) => {
   }
   if (state.isMainImageSelected && !state.uploadedImageUrl) {
     state.setIsMainImageSelected(false);
+  }
+});
+
+// Main-image placement participates in the same history as overlays and keyframes.
+useEditorStore.subscribe((state, previous) => {
+  if (syncingEditorStoreFromImage) return;
+  const { offsetX, offsetY, rotation } = state.screenshot;
+  const placementChanged = offsetX !== previous.screenshot.offsetX || offsetY !== previous.screenshot.offsetY || rotation !== previous.screenshot.rotation;
+  const placement = useImageStore.getState().mainImagePlacement;
+  const nextPlacement = { offsetX, offsetY, rotation };
+  const placementNeedsSync = placement.offsetX !== offsetX || placement.offsetY !== offsetY || placement.rotation !== rotation;
+  const imageState = useImageStore.getState();
+  const editorSnapshot = snapshotEditorStore(state);
+  const snapshotChanged = !editorSnapshotsEqual(imageState.editorSnapshot, editorSnapshot);
+  if (placementChanged || placementNeedsSync || snapshotChanged) {
+    useImageStore.setState({
+      ...(placementNeedsSync ? { mainImagePlacement: nextPlacement } : {}),
+      ...(snapshotChanged ? { editorSnapshot } : {}),
+    });
+  }
+});
+useImageStore.subscribe((state, previous) => {
+  if (state.editorSnapshot === previous.editorSnapshot) return;
+  syncingEditorStoreFromImage = true;
+  try {
+    useEditorStore.setState(state.editorSnapshot);
+  } finally {
+    syncingEditorStoreFromImage = false;
+  }
+});
+useImageStore.subscribe((state, previous) => {
+  if (state.mainImagePlacement !== previous.mainImagePlacement) {
+    const screenshot = useEditorStore.getState().screenshot;
+    syncingEditorStoreFromImage = true;
+    try {
+      useEditorStore.setState({ screenshot: { ...screenshot, ...state.mainImagePlacement } });
+    } finally {
+      syncingEditorStoreFromImage = false;
+    }
   }
 });

@@ -1,152 +1,44 @@
 'use client';
 
 import * as React from 'react';
-import {
-  PlayIcon,
-  PauseIcon,
-  RepeatIcon,
-  RepeatOffIcon,
-  Add01Icon,
-  Cancel01Icon,
-  Time02Icon,
-  Delete02Icon,
-} from 'hugeicons-react';
+import { Play, Pause, Repeat2, Plus, X, Diamond, SkipBack, SkipForward, Undo2, Redo2 } from 'lucide-react';
+import { useStore } from 'zustand';
 import { useImageStore } from '@/lib/store';
-import { cn } from '@/lib/utils';
+import { useMotionSelection } from '@/lib/animation/editor';
+import { capturePose } from '@/lib/animation/authoring';
+import { NumberField } from './NumberField';
+import { undoEditor, redoEditor } from '@/lib/animation/drag-history';
 
-function formatTimeDisplay(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-}
+const iconButton = 'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-30';
 
-interface TimelineControlsProps {
-  onAddAnimation?: () => void;
-  onClose?: () => void;
-}
-
-export function TimelineControls({ onAddAnimation, onClose }: TimelineControlsProps) {
-  const {
-    timeline,
-    togglePlayback,
-    setTimeline,
-    setTimelineDuration,
-    clearAnimationClips,
-    animationClips,
-  } = useImageStore();
-
-  const { isPlaying, isLooping, playhead, duration } = timeline;
-
-  const handleToggleLoop = () => setTimeline({ isLooping: !isLooping });
-  const hasAnimations = animationClips.length > 0;
-  const durationSeconds = duration / 1000;
-  const durationLabel = Number.isInteger(durationSeconds)
-    ? durationSeconds.toString()
-    : durationSeconds.toFixed(1);
-
-  return (
-    <div className="grid h-12 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-3 border-b border-foreground/10 bg-background px-3">
-      <div className="flex min-w-0 items-center">
-        <button
-          type="button"
-          onClick={onAddAnimation}
-          aria-label="Add animation"
-          className={cn(
-            'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-2.5',
-            'bg-foreground/[0.04] border border-foreground/10',
-            'text-xs font-medium text-foreground',
-            'transition-colors duration-150',
-            'hover:bg-foreground/[0.08] hover:border-foreground/15',
-            'active:scale-[0.98]',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40'
-          )}
-        >
-          <Add01Icon size={14} className="text-foreground" />
-          <span className="max-[1100px]:hidden">Add animation</span>
-        </button>
-      </div>
-
-      <div className="flex items-center justify-center gap-2">
-        <button
-          type="button"
-          className={cn(
-            'flex h-8 w-8 cursor-pointer items-center justify-center rounded-md transition-colors duration-150',
-            isLooping
-              ? 'bg-foreground/[0.08] text-foreground'
-              : 'text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40'
-          )}
-          onClick={handleToggleLoop}
-          title={isLooping ? 'Turn looping off' : 'Turn looping on'}
-          aria-label={isLooping ? 'Turn looping off' : 'Turn looping on'}
-          aria-pressed={isLooping}
-        >
-          {isLooping ? <RepeatIcon size={15} /> : <RepeatOffIcon size={15} />}
-        </button>
-
-        <button
-          type="button"
-          className={cn(
-            'inline-flex h-8 w-[72px] cursor-pointer items-center justify-center rounded-md',
-            'bg-primary text-primary-foreground',
-            'shadow-sm',
-            'transition-all duration-150',
-            'hover:opacity-90 active:scale-[0.98]',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background'
-          )}
-          onClick={togglePlayback}
-          aria-label={isPlaying ? 'Pause animation' : 'Play animation'}
-        >
-          {isPlaying ? <PauseIcon size={16} /> : <PlayIcon size={16} />}
-        </button>
-
-        <div className="flex min-w-[66px] items-center tabular-nums">
-          <span className="text-[11px] font-medium text-foreground">
-            {formatTimeDisplay(playhead)}
-          </span>
-          <span className="ml-1 text-[11px] text-muted-foreground">
-            / {formatTimeDisplay(duration)}
-          </span>
-        </div>
-      </div>
-
-      <div className="flex min-w-0 items-center justify-end gap-1.5">
-        <div className="flex items-center gap-2">
-          <span className="whitespace-nowrap text-[10px] font-medium text-muted-foreground">
-            Duration {durationLabel}s
-          </span>
-          <input type="number" min={0.5} step={0.1} value={Number(durationSeconds.toFixed(2))}
-            onChange={e => { if (e.target.value && Number.isFinite(+e.target.value)) setTimelineDuration(+e.target.value * 1000); }}
-            className="h-7 w-20 rounded-md border border-border bg-background px-2 text-xs tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label="Timeline duration seconds" />
-          <Time02Icon size={14} className="shrink-0 text-muted-foreground" />
-        </div>
-
-        {hasAnimations ? (
-          <button
-            type="button"
-            onClick={clearAnimationClips}
-            className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-            title="Clear animations"
-            aria-label="Clear animations"
-          >
-            <Delete02Icon size={15} />
-          </button>
-        ) : null}
-
-        <div className="mx-0.5 h-4 w-px bg-foreground/10" aria-hidden />
-
-        <button
-          type="button"
-          onClick={onClose}
-          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-foreground/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-          title="Close timeline"
-          aria-label="Close timeline"
-        >
-          <Cancel01Icon size={15} />
-        </button>
-      </div>
+export function TimelineControls({ onAddAnimation, onClose }: { onAddAnimation?: () => void; onClose?: () => void }) {
+  const state = useImageStore();
+  const selection = useMotionSelection();
+  const canUndo = useStore(useImageStore.temporal, s => s.pastStates.length > 0);
+  const canRedo = useStore(useImageStore.temporal, s => s.futureStates.length > 0);
+  const { timeline } = state;
+  const clip = state.animationClips.find(c => c.id === selection.clipId);
+  const canCapture = clip && state.showTimeline && !timeline.isPlaying && timeline.playhead >= clip.startTime && timeline.playhead <= clip.startTime + clip.duration;
+  const pending = selection.draft && Object.keys(selection.draft.properties).length > 0;
+  const seek = (time: number) => { state.stopPlayback(); selection.selectKeyframe(null); state.setPlayhead(time); };
+  return <div className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-3">
+    <div className="flex flex-1 items-center gap-1.5">
+      <button type="button" aria-label="Add animation" onClick={onAddAnimation} className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Plus size={14} />New animation</button>
+      <div className="mx-1 h-4 w-px bg-border" />
+      <button className={iconButton} aria-label="Undo animation edit" title="Undo (Ctrl+Z)" disabled={!canUndo && !selection.draft} onClick={undoEditor}><Undo2 size={14} /></button>
+      <button className={iconButton} aria-label="Redo animation edit" title="Redo (Ctrl+Y)" disabled={!canRedo} onClick={redoEditor}><Redo2 size={14} /></button>
     </div>
-  );
+    <div className="flex items-center gap-1.5">
+      <button className={iconButton} aria-label="Go to timeline start" onClick={() => seek(0)}><SkipBack size={14} /></button>
+      <button className="inline-flex h-8 w-12 items-center justify-center rounded-md bg-primary text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={timeline.isPlaying ? 'Pause animation' : 'Play animation'} onClick={state.togglePlayback}>{timeline.isPlaying ? <Pause size={16} /> : <Play size={16} />}</button>
+      <button className={iconButton} aria-label="Go to timeline end" onClick={() => seek(timeline.duration)}><SkipForward size={14} /></button>
+      <NumberField aria-label="Playhead seconds" className="h-8 w-16 rounded-md border border-border bg-background px-2 text-center text-xs tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={timeline.playhead / 1000} min={0} max={timeline.duration / 1000} onValueChange={v => seek(v * 1000)} />
+      <span className="text-xs tabular-nums text-muted-foreground">/ {(timeline.duration / 1000).toFixed(2)}s</span>
+      <button className={`${iconButton} ${timeline.isLooping ? 'bg-accent text-foreground' : ''}`} aria-label={timeline.isLooping ? 'Turn looping off' : 'Turn looping on'} aria-pressed={timeline.isLooping} onClick={() => state.setTimeline({ isLooping: !timeline.isLooping })}><Repeat2 size={14} /></button>
+    </div>
+    <div className="flex flex-1 items-center justify-end gap-2">
+      <button className="inline-flex h-8 items-center gap-2 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-35" aria-label="Set pose keyframe" disabled={!canCapture} onClick={capturePose}><Diamond size={13} fill={pending ? 'currentColor' : 'none'} />Set keyframe<kbd className="hidden text-[10px] opacity-70 xl:inline">K</kbd></button>
+      <button className={iconButton} aria-label="Close timeline" title="Close timeline (Ctrl+`)" onClick={onClose}><X size={16} /></button>
+    </div>
+  </div>;
 }

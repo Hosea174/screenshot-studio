@@ -12,6 +12,7 @@
  */
 
 import { domToCanvas } from 'modern-screenshot';
+import { withVideoCanvasImages } from '@/lib/video-layers';
 import { cleanExportClone, shouldIncludeInExport } from './export-filter';
 import { generateNoiseTextureAsync } from './export-utils';
 import { getMosaicGrid } from './mosaic';
@@ -421,12 +422,12 @@ async function capture3DTransformWithModernScreenshot(
 
   const elementRect = element.getBoundingClientRect();
 
-  const canvas = await domToCanvas(element, {
+  const canvas = await withVideoCanvasImages(() => domToCanvas(element, {
     scale: scale,
     backgroundColor: null,
     filter: shouldIncludeInExport,
     onCloneNode: cleanExportClone,
-  });
+  }));
 
   // Apply blur regions as post-processing
   applyBlurRegionsToCanvas(canvas, elementRect.width, elementRect.height);
@@ -474,7 +475,7 @@ async function exportHTMLCanvas(
   // onCloneNode overrides overflow:hidden → visible on the canvas
   // container so that CSS drop-shadow filters render fully instead
   // of being hard-clipped at the canvas boundary.
-  const canvas = await domToCanvas(container, {
+  const canvas = await withVideoCanvasImages(() => domToCanvas(container, {
     scale: exportScale,
     backgroundColor: null,
     width: originalWidth,
@@ -483,7 +484,7 @@ async function exportHTMLCanvas(
     // post-processing pass because backdrop-filter cannot be rasterized here.
     filter: shouldIncludeInExport,
     onCloneNode: cleanExportClone,
-  });
+  }));
 
   // Apply blur regions as post-processing (CSS backdrop-filter doesn't export)
   applyBlurRegionsToCanvas(canvas, originalWidth, originalHeight);

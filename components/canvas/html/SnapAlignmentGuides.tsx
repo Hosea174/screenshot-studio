@@ -8,7 +8,7 @@ interface SnapAlignmentGuidesProps {
   isDragging: boolean;
 }
 
-const SNAP_THRESHOLD = 6;
+const SNAP_THRESHOLD = 8;
 
 export function SnapAlignmentGuides({
   canvasW,

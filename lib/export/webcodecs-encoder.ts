@@ -19,6 +19,7 @@ export interface WebCodecsEncoderOptions {
   fps: number;
   bitrate?: number; // bits per second, default 10Mbps
   container?: WebCodecsContainer; // default 'mp4'
+  hardwareAcceleration?: HardwareAcceleration;
   onProgress?: (progress: number) => void;
 }
 
@@ -142,7 +143,7 @@ export async function isVpxSupported(): Promise<boolean> {
  * WebCodecs-based video encoder class
  */
 // Module-level cache for supported codec per resolution
-const codecCache = new Map<string, string>();
+const codecCache = new Map<string, VideoEncoderConfig>();
 
 export class WebCodecsVideoEncoder {
   private muxer: Mp4Muxer<Mp4ArrayBufferTarget> | WebmMuxer<WebmArrayBufferTarget> | null = null;
@@ -159,6 +160,7 @@ export class WebCodecsVideoEncoder {
       ...options,
       bitrate: options.bitrate ?? 10_000_000, // 10 Mbps default
       container: options.container ?? 'mp4',
+      hardwareAcceleration: options.hardwareAcceleration ?? 'prefer-hardware',
       onProgress: options.onProgress ?? (() => {}),
     };
   }
@@ -179,38 +181,31 @@ export class WebCodecsVideoEncoder {
     const codecs = container === 'webm' ? VPX_CODECS : AVC_CODECS;
 
     // Check cache first for this resolution
-    const cacheKey = `${container}:${this.evenWidth}x${this.evenHeight}@${fps}`;
-    let supportedCodec: string | null = codecCache.get(cacheKey) || null;
+    const cacheKey = `${container}:${this.evenWidth}x${this.evenHeight}@${fps}:${bitrate}:${this.options.hardwareAcceleration}`;
+    let finalConfig = codecCache.get(cacheKey);
 
-    if (!supportedCodec) {
-      for (const codec of codecs) {
-        const result = await VideoEncoder.isConfigSupported({
-          codec,
-          width: this.evenWidth,
-          height: this.evenHeight,
-          bitrate: 1_000_000,
-          framerate: fps,
-        });
-        if (result.supported) {
-          supportedCodec = codec;
-          codecCache.set(cacheKey, codec);
-          break;
+    if (!finalConfig) {
+      for (const hardwareAcceleration of [this.options.hardwareAcceleration, 'no-preference'] as const) {
+        for (const codec of codecs) {
+          const result = await VideoEncoder.isConfigSupported({
+            codec, width: this.evenWidth, height: this.evenHeight,
+            bitrate, framerate: fps, hardwareAcceleration,
+          });
+          if (result.supported && result.config) {
+            finalConfig = result.config;
+            codecCache.set(cacheKey, finalConfig);
+            break;
+          }
         }
+        if (finalConfig) break;
       }
     }
 
-    if (!supportedCodec) {
+    if (!finalConfig) {
       throw new Error(`VideoEncoder config not supported: ${this.evenWidth}x${this.evenHeight}`);
     }
 
-    // Now build the actual config with the desired bitrate
-    const finalConfig: VideoEncoderConfig = {
-      codec: supportedCodec,
-      width: this.evenWidth,
-      height: this.evenHeight,
-      bitrate,
-      framerate: fps,
-    };
+    const supportedCodec = finalConfig.codec;
 
     // Create the container muxer
     if (container === 'webm') {
@@ -328,17 +323,17 @@ export class WebCodecsVideoEncoder {
 
     // Backpressure: if encoder queue is building up, yield to the browser.
     if (this.encoder.encodeQueueSize > 8) {
-      const drainDeadline = Date.now() + 30_000;
-      while (this.encoder && this.encoder.encodeQueueSize > 2) {
-        if (this.encoderError) throw this.encoderError;
-        if (Date.now() >= drainDeadline) {
-          throw new Error('Video encoder stalled while draining frames.');
-        }
-        // Do not wait for requestAnimationFrame here: browsers pause RAF in
-        // background tabs, which can leave export stuck while waiting for the
-        // encoder queue to drain.
-        await new Promise<void>((resolve) => setTimeout(resolve, 8));
-      }
+      const encoder = this.encoder;
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => { clearTimeout(timer); encoder.removeEventListener('dequeue', drain); };
+        const drain = () => {
+          if (this.encoderError || encoder.state === 'closed') { cleanup(); reject(this.encoderError ?? new Error('Video encoder closed')); }
+          else if (encoder.encodeQueueSize <= 2) { cleanup(); resolve(); }
+        };
+        const timer = setTimeout(() => { cleanup(); reject(this.encoderError ?? new Error('Video encoder stalled while draining frames')); }, 30_000);
+        encoder.addEventListener('dequeue', drain);
+        drain();
+      });
     }
   }
 
@@ -366,6 +361,7 @@ export class WebCodecsVideoEncoder {
     } finally {
       if (flushTimeout) clearTimeout(flushTimeout);
     }
+    if (this.encoderError) throw this.encoderError;
 
     // Finalize the muxer
     this.muxer.finalize();

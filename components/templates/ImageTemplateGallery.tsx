@@ -19,14 +19,9 @@ import {
 } from '@/lib/templates/image-templates';
 import {
   TEMPLATE_DEMO_IMAGE_NAME,
-  TEMPLATE_DEMO_IMAGE_URL,
 } from '@/lib/templates/demo-media';
 import { cn } from '@/lib/utils';
-
-const TEMPLATE_SCREEN = createDeviceScreen(
-  TEMPLATE_DEMO_IMAGE_URL,
-  TEMPLATE_DEMO_IMAGE_NAME,
-);
+import { useTemplateMediaSource } from './useTemplateMediaSource';
 
 export function ImageTemplatePreview({
   template,
@@ -35,11 +30,17 @@ export function ImageTemplatePreview({
   template: ImageTemplate;
   className?: string;
 }) {
+  const previewImageUrl = useTemplateMediaSource();
+  const previewScreen = React.useMemo(
+    () => createDeviceScreen(previewImageUrl, TEMPLATE_DEMO_IMAGE_NAME),
+    [previewImageUrl],
+  );
+
   if (template.scene.kind === 'screenshot') {
     return (
       <PresetPreview
         preset={template.preset}
-        previewImageUrl={TEMPLATE_DEMO_IMAGE_URL}
+        previewImageUrl={previewImageUrl}
         placement={template.scene.placement}
         className={className}
       />
@@ -70,7 +71,7 @@ export function ImageTemplatePreview({
               transform: `translate(-50%, -50%) rotate(${device.rotation}deg)`,
             }}
           >
-            <DeviceShell definition={definition} screen={TEMPLATE_SCREEN} />
+            <DeviceShell definition={definition} screen={previewScreen} />
           </div>
         );
       })}

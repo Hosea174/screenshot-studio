@@ -5,6 +5,8 @@ const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
+  allowedDevOrigins: ["127.0.0.1"],
+  devIndicators: false,
 
   images: {
     remotePatterns: [

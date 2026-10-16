@@ -20,11 +20,10 @@ export function splitPropertyTracks(tracks: AnimationTrack[]): AnimationTrack[] 
 
 export function createCustomPreset(group: 'asset' | 'camera', state: AnimatableProperties = DEFAULT_ANIMATABLE_PROPERTIES): AnimationPreset {
   const properties = Object.fromEntries(PROPERTY_CONTROLS.filter(p => p.group === group).map(p => [p.key, state[p.key]]));
-  return { id: `custom-${group}`, name: group === 'camera' ? 'Camera move' : 'Custom animation', description: 'Your editable before and after states', category: 'effects', duration: 2000,
+  return { id: `custom-${group}`, name: group === 'camera' ? 'Camera move' : 'Custom animation', description: 'Set a starting state, then add keyframes to animate it', category: 'effects', duration: 2000,
     tracks: [{ id: 'custom-track', name: group === 'camera' ? 'Camera' : 'Asset', type: group === 'camera' ? 'camera' : 'transform', isLocked: false, isVisible: true,
       keyframes: [
         { id: 'before', time: 0, properties, easing: 'ease-in-out-cubic' },
-        { id: 'after', time: 2000, properties: { ...properties, ...(group === 'camera' ? { cameraZoom: state.cameraZoom * 1.15 } : { scale: state.scale * 1.15 }) }, easing: 'ease-in-out-cubic' },
       ] }],
   };
 }
@@ -54,15 +53,23 @@ export const EASE_LABELS: Record<EasingPreset, string> = {
 };
 
 interface MotionSelection {
+  videoId: string | null;
+  selectVideo: (id: string | null) => void;
   clipId: string | null;
   keyframe: { trackId: string; keyframeId: string; property: keyof AnimatableProperties | 'clipMask' } | null;
+  draft: { clipId: string; time: number; properties: Partial<AnimatableProperties> } | null;
+  stagePose: (clipId: string, time: number, properties: Partial<AnimatableProperties>) => void;
+  discardPose: () => void;
   selectClip: (id: string | null) => void;
   selectKeyframe: (keyframe: MotionSelection['keyframe']) => void;
 }
 export const useMotionSelection = create<MotionSelection>((set) => ({
-  clipId: null, keyframe: null,
-  selectClip: (clipId) => set({ clipId, keyframe: null }),
-  selectKeyframe: (keyframe) => set({ keyframe }),
+  clipId: null, keyframe: null, draft: null, videoId: null,
+  selectVideo: (videoId) => set({ videoId, clipId: null, keyframe: null, draft: null }),
+  stagePose: (clipId, time, properties) => set(s => ({ draft: { clipId, time, properties: { ...(s.draft?.clipId === clipId && s.draft.time === time ? s.draft.properties : {}), ...properties } } })),
+  discardPose: () => set({ draft: null }),
+  selectClip: (clipId) => set(s => ({ clipId, videoId: null, keyframe: null, draft: s.clipId === clipId ? s.draft : null })),
+  selectKeyframe: (keyframe) => set(keyframe ? { keyframe, videoId: null } : { keyframe }),
 }));
 
 export const useMotionLibrary = create(persist<{

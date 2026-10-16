@@ -2,13 +2,13 @@
 
 import { useEffect, useMemo, useRef } from 'react';
 import { useReducedMotion } from 'motion/react';
-import { useImageStore } from '@/lib/store';
 import { getBackgroundCSS } from '@/lib/constants/backgrounds';
 import { buildAnimatedTemplateTimeline, type AnimatedTemplate } from '@/lib/animation/templates';
 import { getClipInterpolatedProperties, getClipMaskAtTime } from '@/lib/animation/interpolation';
-import { TEMPLATE_DEMO_IMAGE_URL } from '@/lib/templates/demo-media';
 import { getFrameImageStyle, TEMPLATE_PREVIEW_RENDER_SCALE } from '@/components/presets/PresetGallery';
 import { cn } from '@/lib/utils';
+import { useImageStore } from '@/lib/store';
+import { useTemplateMediaSource } from './useTemplateMediaSource';
 
 /** Sample the editor evaluator directly so masks, cuts, and segment easing match export. */
 export function CinematicTemplatePreview({ template, active = false, className, showBadges = true }: {
@@ -18,7 +18,7 @@ export function CinematicTemplatePreview({ template, active = false, className, 
   showBadges?: boolean;
 }) {
   const reducedMotion = useReducedMotion();
-  const source = useImageStore((state) => state.uploadedImageUrl) ?? TEMPLATE_DEMO_IMAGE_URL;
+  const source = useTemplateMediaSource();
   const background = useImageStore((state) => state.backgroundConfig);
   const border = useImageStore((state) => state.imageBorder);
   const radius = useImageStore((state) => state.borderRadius);

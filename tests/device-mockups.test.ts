@@ -34,7 +34,7 @@ test("autosave never replaces the saved canvas background", async () => {
   );
 
   assert.doesNotMatch(source, /DEFAULT_CANVAS_BACKGROUND|red_distortion_4/);
-  assert.match(source, /useImageStore\.setState\(\{\s*\.\.\.definedOnly\(rest\)/);
+  assert.match(source, /useImageStore\.setState\(\{\s*\.\.\.\(Object\.fromEntries\(Object\.entries\(rest\)/);
 });
 
 test("device library ships licensed device assets", () => {
@@ -206,10 +206,10 @@ test("drafts store inherited device images once without changing custom screens"
     new URL("../hooks/useAutosaveDraft.ts", import.meta.url),
     "utf8",
   );
-  assert.match(source, /processMockups\(persistedImage\.mockups\)/);
-  assert.match(source, /processMockups\(persistedImage\.deviceLayoutSnapshot\)/);
-  assert.match(source, /deviceScreenAssets\[assetId\] = src/);
-  assert.match(source, /sourceRef: `device-screen:\$\{assetId\}`/);
+  assert.match(source, /processMockups\(imageState\.mockups\)/);
+  assert.match(source, /processMockups\(imageState\.deviceLayoutSnapshot\)/);
+  assert.match(source, /deviceScreenAssets\[id\] = src/);
+  assert.match(source, /sourceRef: `device-screen:\$\{id\}`/);
 });
 
 test("device screen uploads use durable data URLs instead of leaking blob URLs", async () => {

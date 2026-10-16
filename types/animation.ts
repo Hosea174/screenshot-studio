@@ -85,18 +85,16 @@ export interface TimelineState {
   isLooping: boolean;
   tracks: AnimationTrack[];
   zoom: number; // zoom level for timeline UI (1 = 100%)
-  snapToKeyframes: boolean;
 }
 
 // Default timeline state
 export const DEFAULT_TIMELINE_STATE: TimelineState = {
-  duration: 3000, // 3 seconds default
+  duration: 5000, // Still images default to five seconds.
   playhead: 0,
   isPlaying: false,
   isLooping: true,
   tracks: [],
   zoom: 1,
-  snapToKeyframes: true,
 };
 
 // Animation preset definition

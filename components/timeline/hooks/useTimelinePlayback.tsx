@@ -1,6 +1,7 @@
 'use client';
 import * as React from 'react';
 import { useImageStore } from '@/lib/store';
+import { useMotionSelection } from '@/lib/animation/editor';
 import { applyAnimationFrame } from '@/lib/animation/playback';
 function getActiveSlideAtTime(
   slides: { id: string; duration: number }[],
@@ -26,13 +27,14 @@ function getActiveSlideAtTime(
 
 
 export function useTimelinePlayback() {
+  const draft = useMotionSelection(s => s.draft);
   const timeline = useImageStore(s => s.timeline);
   const clips = useImageStore(s => s.animationClips);
   const hadMotion = React.useRef(false);
   React.useEffect(() => {
     if (clips.length || timeline.tracks.length || hadMotion.current) applyAnimationFrame(timeline.playhead, hadMotion.current);
     hadMotion.current = clips.length > 0 || timeline.tracks.length > 0;
-  }, [timeline.playhead, timeline.tracks, clips]);
+  }, [timeline.playhead, timeline.tracks, clips, draft]);
   React.useEffect(() => {
     if (!timeline.isPlaying) return;
     let raf = 0;

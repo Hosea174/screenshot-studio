@@ -1,11 +1,15 @@
 'use client';
 
 import * as React from 'react';
+import { createPortal } from 'react-dom';
+import { beginMotionDrag } from '@/lib/animation/drag-history';
 import { useRef, useState, useCallback, useMemo, useEffect } from 'react';
 import { type ShadowConfig } from '../utils/shadow-utils';
 import { ShadowDefinition } from './ShadowDefinition';
 import { buildDropShadowFilter as buildSharedDropShadowFilter, parseShadowRgb } from '@/lib/drop-shadow';
 import { type ImageFilters, useImageStore } from '@/lib/store';
+import { editingClip, motionPose, previewPose, selectMotionTarget } from '@/lib/animation/authoring';
+import { DEFAULT_ANIMATABLE_PROPERTIES } from '@/types/animation';
 import { SafariToolbar, ChromeToolbar } from '../frames/BrowserToolbar';
 
 const ROTATE_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none'%3E%3Cpath d='M20.5 4v5h-5' stroke='%23000' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M20.5 4v5h-5' stroke='%23fff' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M19.8 14.5a8 8 0 1 1-.5-6.5l1.2-1.2' stroke='%23000' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M19.8 14.5a8 8 0 1 1-.5-6.5l1.2-1.2' stroke='%23fff' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 12 12, crosshair`;
@@ -165,12 +169,35 @@ export function HTMLMainImageLayer({
   onDragStateChange,
   onRemoveImage,
 }: HTMLMainImageLayerProps) {
+  const gesturePose = useRef(DEFAULT_ANIMATABLE_PROPERTIES);
+  const finishHistory = useRef<(() => void) | null>(null);
+  const finishGesture = () => { finishHistory.current?.(); finishHistory.current = null; };
+  useEffect(() => () => finishHistory.current?.(), []);
+  const beginPose = () => { finishGesture(); const clip = editingClip('asset'); gesturePose.current = clip ? motionPose(clip) : DEFAULT_ANIMATABLE_PROPERTIES; finishHistory.current = beginMotionDrag(); };
   const imageClipPath = useImageStore((state) => state.imageClipPath);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [controlBounds, setControlBounds] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  React.useLayoutEffect(() => {
+    if (!isMainImageSelected || !containerRef.current) return;
+    const update = () => {
+      const rect = containerRef.current!.getBoundingClientRect();
+      const bounds = { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+      setControlBounds(old => old && Object.keys(bounds).every(key => old[key as keyof typeof old] === bounds[key as keyof typeof bounds]) ? old : bounds);
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => { window.removeEventListener('resize', update); window.removeEventListener('scroll', update, true); };
+  }, [isMainImageSelected, screenshot, perspective3D, framedW, framedH, canvasW, canvasH]);
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [isResizing, setIsResizing] = useState(false);
   const [isRotating, setIsRotating] = useState(false);
+  useEffect(() => {
+    const cancel = () => { finishGesture(); setIsDragging(false); setIsResizing(false); setIsRotating(false); onDragStateChange?.(false); };
+    window.addEventListener('pointercancel', cancel);
+    return () => window.removeEventListener('pointercancel', cancel);
+  }, [onDragStateChange]);
   const resizeStartRef = useRef<{ mouseX: number; mouseY: number; scale: number; handle: string } | null>(null);
   const rotateStartRef = useRef<{ centerX: number; centerY: number; startAngle: number; startRotation: number } | null>(null);
 
@@ -191,6 +218,8 @@ export function HTMLMainImageLayer({
     if (isResizing || isRotating) return;
     e.preventDefault();
     e.stopPropagation();
+    selectMotionTarget('asset');
+    beginPose();
     setIsDragging(true);
     onDragStateChange?.(true);
     setDragStart({
@@ -206,6 +235,7 @@ export function HTMLMainImageLayer({
   const handleResizeMouseDown = useCallback((e: React.PointerEvent, handle: string) => {
     e.preventDefault();
     e.stopPropagation();
+    beginPose();
     setIsResizing(true);
     resizeStartRef.current = {
       mouseX: e.clientX,
@@ -227,19 +257,14 @@ export function HTMLMainImageLayer({
       if (Math.abs(newOffsetX) < SNAP_THRESHOLD) newOffsetX = 0;
       if (Math.abs(newOffsetY) < SNAP_THRESHOLD) newOffsetY = 0;
 
-      setScreenshot({ offsetX: newOffsetX, offsetY: newOffsetY });
+      if (!previewPose('asset', { translateX: gesturePose.current.translateX + (newOffsetX - screenshot.offsetX) / canvasW * 100, translateY: gesturePose.current.translateY + (newOffsetY - screenshot.offsetY) / canvasH * 100 })) setScreenshot({ offsetX: newOffsetX, offsetY: newOffsetY });
     };
 
     const handleMouseUp = () => {
       setIsDragging(false);
       onDragStateChange?.(false);
-      const state = useImageStore.getState();
-      if (!state.timeline.isPlaying && (state.activeRightPanelTab === 'animate' || state.animationClips.length > 0)) {
-        state.recordPropertyChanges({
-          translateX: Math.round(((screenshot.offsetX || 0) / (canvasW || 1)) * 100 * 10) / 10,
-          translateY: Math.round(((screenshot.offsetY || 0) / (canvasH || 1)) * 100 * 10) / 10,
-        });
-      }
+      finishGesture();
+
     };
 
     window.addEventListener('pointermove', handleMouseMove);
@@ -273,19 +298,17 @@ export function HTMLMainImageLayer({
       // Project mouse movement onto diagonal direction
       const diagonal = (dx * dirX + dy * dirY) / 2;
       // Sensitivity: ~1 scale unit per 2px of movement
-      const scaleDelta = diagonal * 0.5;
+      const scaleDelta = diagonal * (e.shiftKey && e.altKey ? 1 : 0.5);
       const newScale = Math.round(Math.min(200, Math.max(10, start.scale + scaleDelta)));
 
-      useImageStore.getState().setImageScale(newScale);
+      if (!previewPose('asset', { scale: Math.max(0.05, Math.min(5, gesturePose.current.scale * newScale / start.scale)) })) useImageStore.getState().setImageScale(newScale);
     };
 
     const handleMouseUp = () => {
       setIsResizing(false);
       resizeStartRef.current = null;
-      const state = useImageStore.getState();
-      if (!state.timeline.isPlaying && (state.activeRightPanelTab === 'animate' || state.animationClips.length > 0)) {
-        state.recordPropertyChange('scale', state.imageScale / 100);
-      }
+      finishGesture();
+
     };
 
     window.addEventListener('pointermove', handleMouseMove);
@@ -301,6 +324,7 @@ export function HTMLMainImageLayer({
   const handleRotateMouseDown = useCallback((e: React.PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    beginPose();
     setIsRotating(true);
 
     const rect = containerRef.current?.getBoundingClientRect();
@@ -329,16 +353,14 @@ export function HTMLMainImageLayer({
       const currentAngle = Math.atan2(e.clientY - start.centerY, e.clientX - start.centerX) * (180 / Math.PI);
       const delta = currentAngle - start.startAngle;
       const newRotation = Math.round(start.startRotation + delta);
-      setScreenshot({ rotation: newRotation });
+      if (!previewPose('asset', { rotateZ: gesturePose.current.rotateZ + newRotation - start.startRotation })) setScreenshot({ rotation: newRotation });
     };
 
     const handleMouseUp = () => {
       setIsRotating(false);
       rotateStartRef.current = null;
-      const state = useImageStore.getState();
-      if (!state.timeline.isPlaying && (state.activeRightPanelTab === 'animate' || state.animationClips.length > 0)) {
-        state.recordPropertyChange('rotateZ', screenshot.rotation);
-      }
+      finishGesture();
+
     };
 
     window.addEventListener('pointermove', handleMouseMove);
@@ -387,9 +409,9 @@ export function HTMLMainImageLayer({
     rotateZ(${p3d.rotateZ + screenshot.rotation}deg)
   `.replace(/\s+/g, ' ').trim();
 
-  const handleScale = p3d.scale > 0 ? 1 / p3d.scale : 1;
 
   const browserRadius = screenshot.radius;
+  const canvasBounds = containerRef.current?.closest('[data-html-canvas]')?.getBoundingClientRect();
 
   // Image border radius based on frame type
   const getImageBorderRadius = () => {
@@ -632,8 +654,16 @@ export function HTMLMainImageLayer({
       </div>
 
       {/* Resize & Figma-style corner rotation handles — visible when selected, excluded from export */}
-      {isMainImageSelected && (
-        <>
+      {isMainImageSelected && controlBounds && createPortal(
+        <div data-resize-handle="true" style={{ position: 'fixed', ...controlBounds, pointerEvents: 'none', outline: '1px solid rgb(59,130,246)', zIndex: 1000 }}>
+          {canvasBounds && (controlBounds.width > canvasW || controlBounds.height > canvasH || controlBounds.left < canvasBounds.left || controlBounds.top < canvasBounds.top) && <button type="button" aria-label="Fit main image to canvas" style={{ position: 'fixed', left: canvasBounds.left + 12, top: canvasBounds.top + 12, pointerEvents: 'auto' }} className="rounded-md border border-border bg-background px-3 py-2 text-xs text-foreground shadow" onPointerDown={e => e.stopPropagation()} onClick={() => {
+            const finish = beginMotionDrag();
+            const factor = Math.min(canvasW / controlBounds.width, canvasH / controlBounds.height) * 0.8;
+            const clip = editingClip('asset');
+            if (clip) previewPose('asset', { scale: Math.max(0.05, motionPose(clip).scale * factor), translateX: -screenshot.offsetX / canvasW * 100, translateY: -screenshot.offsetY / canvasH * 100 });
+            else { useImageStore.getState().setImageScale(useImageStore.getState().imageScale * factor); setScreenshot({ offsetX: 0, offsetY: 0 }); }
+            finish();
+          }}>Fit image</button>}
           {(['tl', 'tr', 'bl', 'br'] as const).map((handle) => {
             const isTop = handle[0] === 't';
             const isLeft = handle[1] === 'l';
@@ -656,7 +686,6 @@ export function HTMLMainImageLayer({
                     cursor: ROTATE_CURSOR,
                     zIndex: 19,
                     pointerEvents: 'auto',
-                    transform: `scale(${handleScale})`,
                   }}
                 />
                 {/* Inner corner resize handle */}
@@ -679,13 +708,12 @@ export function HTMLMainImageLayer({
                     cursor: resizeCursor,
                     zIndex: 20,
                     pointerEvents: 'auto',
-                    transform: `scale(${handleScale})`,
                   }}
                 />
               </React.Fragment>
             );
           })}
-        </>
+        </div>, document.body
       )}
       </div>
     </div>

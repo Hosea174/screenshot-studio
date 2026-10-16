@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { undoEditor, redoEditor } from '@/lib/animation/drag-history';
 import Link from "next/link";
 import Image from "next/image";
 import { NewTwitterIcon } from "hugeicons-react";
@@ -56,6 +57,7 @@ import {
 } from "@/components/export";
 import { cn } from "@/lib/utils";
 import { GitHubStarButton } from "@/components/ui/github-star-button";
+import { EditorProjectMenu } from "@/components/editor/EditorProjectMenu";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
   hasVisibleMockups,
@@ -119,28 +121,24 @@ export function EditorHeader() {
     return unsubscribe;
   }, []);
 
-  const handleUndo = React.useCallback(() => {
-    const { undo, pastStates } = useImageStore.temporal.getState();
-    if (pastStates.length > 0) undo();
-  }, []);
+  const handleUndo = React.useCallback(undoEditor, []);
 
-  const handleRedo = React.useCallback(() => {
-    const { redo, futureStates } = useImageStore.temporal.getState();
-    if (futureStates.length > 0) redo();
-  }, []);
+  const handleRedo = React.useCallback(redoEditor, []);
 
   // Keep history shortcuts mounted even when undo/delete empties the canvas.
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (shouldIgnoreEditorShortcut(event) || event.altKey || !(event.metaKey || event.ctrlKey)) return;
+      const numericControl = event.target instanceof HTMLElement && !!event.target.closest('[data-slot="slider"],input[type="range"],input[type="number"],input[inputmode="decimal"]');
+      if ((shouldIgnoreEditorShortcut(event) && !numericControl) || event.altKey || !(event.metaKey || event.ctrlKey)) return;
       const key = event.key.toLowerCase();
       if (key !== "z" && key !== "y") return;
       event.preventDefault();
+      event.stopImmediatePropagation();
       if (key === "y" || event.shiftKey) handleRedo();
       else handleUndo();
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [handleUndo, handleRedo]);
 
   const showVideoExport =
@@ -215,6 +213,8 @@ export function EditorHeader() {
               Screenshot Studio
             </span>
           </Link>
+
+          <EditorProjectMenu />
 
           {!isMobile ? (
             <>

@@ -4,6 +4,7 @@ import { getCanvasContainer } from "@/components/canvas/ClientCanvas";
 import { getAspectRatioPreset } from "@/lib/aspect-ratio-utils";
 
 import { useEditorStore, useImageStore } from "@/lib/store";
+import { withVideoCanvasImages } from "@/lib/video-layers";
 
 export async function exportSlideFrame(): Promise<HTMLImageElement> {
   const imageStore = useImageStore.getState();
@@ -45,25 +46,27 @@ export async function exportSlideFrame(): Promise<HTMLImageElement> {
  * Export slide frame as a Canvas element (for video encoding).
  * Uses direct DOM-to-canvas capture without Sharp processing.
  */
-export async function exportSlideFrameAsCanvas(): Promise<HTMLCanvasElement> {
+export async function exportSlideFrameAsCanvas(
+  outputDimensions?: { width: number; height: number }
+): Promise<HTMLCanvasElement> {
   const imageStore = useImageStore.getState();
   const editorStore = useEditorStore.getState();
 
   const preset = getAspectRatioPreset(imageStore.selectedAspectRatio);
   if (!preset) throw new Error("Invalid aspect ratio");
 
-  return exportElementAsCanvas(
+  return withVideoCanvasImages(() => exportElementAsCanvas(
     "image-render-card",
     {
       format: "png",
       qualityPreset: "high",
       scale: 1,
-      exportWidth: preset.width,
-      exportHeight: preset.height,
+      exportWidth: outputDimensions?.width ?? preset.width,
+      exportHeight: outputDimensions?.height ?? preset.height,
     },
     getCanvasContainer(),
     imageStore.backgroundBorderRadius,
     imageStore.perspective3D,
     editorStore.screenshot.src || undefined,
-  );
+  ));
 }

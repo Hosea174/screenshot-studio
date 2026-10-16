@@ -1,5 +1,37 @@
-import type { ImageOverlay } from '@/lib/store';
 import { useImageStore } from '@/lib/store';
+import { videoTimeAt } from './export/video-timing';
+export { videoTimeAt } from './export/video-timing';
+
+let videoCanvasSnapshotDepth = 0;
+
+/** Keep preview playback from repainting video canvases while a DOM snapshot is captured. */
+export async function withVideoCanvasSnapshot<T>(capture: () => Promise<T>): Promise<T> {
+  videoCanvasSnapshotDepth++;
+  try { return await capture(); }
+  finally { videoCanvasSnapshotDepth = Math.max(0, videoCanvasSnapshotDepth - 1); }
+}
+
+/** Let DOM snapshotters clone video frames as ordinary images instead of canvases. */
+export async function withVideoCanvasImages<T>(capture: () => Promise<T>): Promise<T> {
+  const replaced: { canvas: HTMLCanvasElement; image: HTMLImageElement }[] = [];
+  try {
+    for (const canvas of Array.from(document.querySelectorAll<HTMLCanvasElement>('canvas[data-video-canvas]'))) {
+      let src: string;
+      try { src = canvas.toDataURL('image/png'); }
+      catch { throw new Error('A video frame is not readable for export. Reload the source video and try again.'); }
+      const image = document.createElement('img');
+      for (const attribute of Array.from(canvas.attributes)) image.setAttribute(attribute.name, attribute.value);
+      if (canvas.dataset.videoExport === 'true') image.style.visibility = 'visible';
+      image.src = src;
+      canvas.replaceWith(image);
+      replaced.push({ canvas, image });
+      await image.decode();
+    }
+    return await capture();
+  } finally {
+    for (const { canvas, image } of replaced.reverse()) image.replaceWith(canvas);
+  }
+}
 
 export const VIDEO_FILE_ACCEPT = {
   'video/mp4': ['.mp4', '.m4v'],
@@ -14,10 +46,11 @@ export function isVideoFile(file: Pick<File, 'type' | 'name'>) {
 export async function addVideoLayer(file: File) {
   const video = await readVideoFile(file);
   const state = useImageStore.getState();
-  state.addImageOverlay({ src: video.url, poster: video.poster, mediaType: 'video', mediaDuration: video.duration, mediaWidth: video.width, mediaHeight: video.height, position: { x: 350, y: 300 }, size: 400, rotation: 0, opacity: 1, flipX: false, flipY: false, isVisible: true, isCustom: true, startTime: 0, trimStart: 0, playbackRate: 1, loop: false });
+  const width = state.canvasDimensions?.canvasW ?? 700;
+  const height = state.canvasDimensions?.canvasH ?? 600;
+  state.addImageOverlay({ src: video.url, poster: video.poster, mediaType: 'video', mediaDuration: video.duration, mediaWidth: video.width, mediaHeight: video.height, position: { x: width / 2, y: height / 2 }, size: Math.min(width, height) * 0.82, rotation: 0, opacity: 1, flipX: false, flipY: false, isVisible: true, isCustom: true, startTime: 0, trimStart: 0, playbackRate: 1, loop: false });
   state.setSelectedOverlayId(useImageStore.getState().imageOverlays.at(-1)!.id);
   state.setShowTimeline(true);
-  state.setTimelineDuration(Math.max(state.timeline.duration, video.duration * 1000));
 }
 
 export async function readVideoFile(file: File) {
@@ -50,17 +83,20 @@ export async function readVideoFile(file: File) {
   finally { video.removeAttribute('src'); video.load(); }
 }
 
-export function videoTimeAt(overlay: ImageOverlay, timelineMs: number) {
-  const duration = overlay.mediaDuration ?? 0;
-  const trim = Math.min(Math.max(0, overlay.trimStart ?? 0), duration);
-  const elapsed = Math.max(0, timelineMs - (overlay.startTime ?? 0)) / 1000 * Math.max(0.1, overlay.playbackRate ?? 1);
-  const available = Math.max(0.001, duration - trim);
-  return Math.max(0, Math.min(duration - 0.001, trim + (overlay.loop ? elapsed % available : Math.min(elapsed, available))));
-}
-
 export function drawVideoFrame(video: HTMLVideoElement, id: string) {
+  if (videoCanvasSnapshotDepth > 0) return;
   const canvas = document.querySelector<HTMLCanvasElement>(`canvas[data-video-canvas="${id}"]`);
-  if (canvas && video.readyState >= 2) canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height);
+  if (canvas && video.readyState >= 2) {
+    if (video.videoWidth && video.videoHeight && (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+    }
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  }
 }
 
 /** Await decoded source frames before the DOM exporter snapshots canvas pixels. */

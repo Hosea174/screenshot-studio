@@ -19,10 +19,10 @@ import {
 import { getPresetById } from '@/lib/animation/presets';
 import { DEFAULT_ANIMATABLE_PROPERTIES } from '@/types/animation';
 import { presets } from '@/lib/constants/presets';
-import { TEMPLATE_DEMO_IMAGE_URL } from '@/lib/templates/demo-media';
 import { getImageTemplateById } from '@/lib/templates/image-templates';
 import { cn } from '@/lib/utils';
 import { CinematicTemplatePreview } from './CinematicTemplatePreview';
+import { useTemplateMediaSource } from './useTemplateMediaSource';
 
 type PreviewAnimation = {
   animate: {
@@ -96,6 +96,7 @@ function BasicAnimatedTemplatePreview({
   showBadges = true,
 }: AnimatedTemplatePreviewProps) {
   const shouldReduceMotion = useReducedMotion();
+  const previewImageUrl = useTemplateMediaSource();
   const imageTemplate = getImageTemplateById(template.visualPresetId);
   const visualPreset = imageTemplate?.preset
     ?? presets.find((preset) => preset.id === template.visualPresetId);
@@ -160,7 +161,7 @@ function BasicAnimatedTemplatePreview({
               }}
             >
               <img
-                src={TEMPLATE_DEMO_IMAGE_URL}
+                src={previewImageUrl}
                 alt=""
                 draggable={false}
                 className="block aspect-video w-full object-cover"

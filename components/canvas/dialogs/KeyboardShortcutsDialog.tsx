@@ -16,11 +16,15 @@ interface ShortcutGroup {
 
 const shortcutGroups: ShortcutGroup[] = [
   { title: 'Animation timeline', shortcuts: [
-    { keys: ['Space'], description: 'Play / pause' },
+    { keys: ['Space'], description: 'Play / pause anywhere in the editor' },
     { keys: ['K'], description: 'Capture keyframe at playhead' },
     { keys: ['← / →'], description: 'Step one frame (60 fps)' },
     { keys: ['Shift', '← / →'], description: 'Step ten frames' },
     { keys: ['Home / End'], description: 'Jump to timeline bounds' },
+    { keys: ['Ctrl', 'Alt', '← / →'], description: 'Jump to the beginning / end' },
+    { keys: ['Q'], description: 'Trim selected video left to playhead' },
+    { keys: ['W'], description: 'Trim selected video right to playhead' },
+    { keys: ['Ctrl', 'Alt', 'B'], description: 'Split selected video at playhead' },
     { keys: ['Alt', 'Drag'], description: 'Drag without snapping' },
     { keys: ['Delete / Backspace'], description: 'Remove selected keyframe or clip' },
   ] },

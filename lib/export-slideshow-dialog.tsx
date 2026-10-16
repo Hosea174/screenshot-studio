@@ -13,22 +13,22 @@ import { Input } from "@/components/ui/input";
 import { useImageStore } from "@/lib/store";
 import confetti from 'canvas-confetti';
 import { toast } from 'sonner';
+import { formatNumber, roundToTwoDecimals } from '@/lib/number-format';
 import {
   exportSlideshowVideo,
   exportAnimationVideo,
-  preloadFFmpeg,
+  getVideoOutputDimensions,
   isExportAborted,
   type VideoExportOptions,
 } from "@/lib/export-slideshow-video";
-import { isFFmpegLoaded } from "@/lib/export/ffmpeg-encoder";
 import { useExportProgress } from "@/hooks/useExportProgress";
-import { isMp4Supported, type VideoFormat, type VideoQuality } from "@/lib/export/video-encoder";
+import { type VideoFormat, type VideoQuality } from "@/lib/export/video-encoder";
 
 type ExportMode = "slideshow" | "animation";
 
 const FORMAT_OPTIONS: { value: VideoFormat; label: string; description: string }[] = [
   { value: "mp4", label: "MP4 (H.264)", description: "Best compatibility, smaller file size" },
-  { value: "webm", label: "WebM (VP8)", description: "Open format, web-optimized" },
+  { value: "webm", label: "WebM (VP9/VP8)", description: "Open format, web-optimized" },
 ];
 
 const QUALITY_OPTIONS: { value: VideoQuality; label: string; bitrate: string }[] = [
@@ -37,77 +37,19 @@ const QUALITY_OPTIONS: { value: VideoQuality; label: string; bitrate: string }[]
   { value: "low", label: "Low", bitrate: "5 Mbps" },
 ];
 
-const EXPORT_MESSAGES = [
-  "Capturing frames...",
-  "Assembling your masterpiece...",
-  "Encoding pixels with care...",
-  "Almost there, hang tight...",
-  "Polishing the final cut...",
-];
-
 function ExportProgressView({ progress, format }: { progress: number; format: string }) {
-  const [messageIndex, setMessageIndex] = useState(0);
-
-  useEffect(() => {
-    if (progress < 20) setMessageIndex(0);
-    else if (progress < 40) setMessageIndex(1);
-    else if (progress < 60) setMessageIndex(2);
-    else if (progress < 85) setMessageIndex(3);
-    else setMessageIndex(4);
-  }, [progress]);
-
-  const roundedProgress = Math.round(progress);
-
+  const { stage, processedFrames, totalFrames, elapsedMs, remainingMs, fallbackReason } = useExportProgress();
   return (
-    <div className="flex flex-col items-center py-8 space-y-6">
-      {/* Film reel loader */}
-      <style>{`
-        .film-loader {
-          width: 80px;
-          height: 70px;
-          border: 5px solid var(--primary);
-          padding: 0 8px;
-          box-sizing: border-box;
-          background:
-            linear-gradient(var(--primary) 0 0) 0 0/8px 20px,
-            linear-gradient(var(--primary) 0 0) 100% 0/8px 20px,
-            radial-gradient(farthest-side, var(--primary) 90%, #0000) 0 5px/8px 8px content-box,
-            var(--accent);
-          background-repeat: no-repeat;
-          animation: filmLoad 2s infinite linear;
-        }
-        @keyframes filmLoad {
-          25% { background-position: 0 0, 100% 100%, 100% calc(100% - 5px); }
-          50% { background-position: 0 100%, 100% 100%, 0 calc(100% - 5px); }
-          75% { background-position: 0 100%, 100% 0, 100% 5px; }
-        }
-      `}</style>
-      <div className="film-loader" />
-
-      {/* Percentage */}
-      <span className="text-2xl font-bold text-primary tabular-nums">{roundedProgress}%</span>
-
-      {/* Progress bar */}
-      <div className="w-full">
-        <div className="h-1.5 bg-accent rounded-full overflow-hidden">
-          <div
-            className="h-full bg-primary rounded-full transition-all duration-200 ease-out"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
+    <div className="space-y-4 py-6" aria-live="polite">
+      <p className="text-sm font-medium">{stage} {format.toUpperCase()}…</p>
+      <div role="progressbar" aria-label="Video export" aria-valuenow={Math.round(progress)} aria-valuemin={0} aria-valuemax={100} className="h-1.5 bg-accent rounded-full overflow-hidden">
+        <div className="h-full bg-primary transition-[width] duration-200 motion-reduce:transition-none" style={{ width: `${progress}%` }} />
       </div>
-
-      {/* Status message */}
-      <p className="text-sm text-muted-foreground">
-        {EXPORT_MESSAGES[messageIndex]}
-      </p>
-
-      {/* Format tag */}
-      <div className="px-3 py-1 rounded-full bg-accent border border-border/50">
-        <span className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium">
-          Exporting as {format.toUpperCase()}
-        </span>
+      <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
+        <span>{totalFrames ? `${processedFrames} / ${totalFrames} frames` : `${Math.round(progress)}%`}</span>
+        <span>{Math.round(elapsedMs / 1000)}s elapsed{remainingMs !== null ? ` · ~${Math.ceil(remainingMs / 1000)}s left` : ''}</span>
       </div>
+      {fallbackReason && <p className="text-xs text-muted-foreground">{fallbackReason}. All effects are preserved.</p>}
     </div>
   );
 }
@@ -123,22 +65,14 @@ export function ExportSlideshowDialog({
   const { active: exporting, progress, abort } = useExportProgress();
   const [format, setFormat] = useState<VideoFormat>("mp4");
   const [quality, setQuality] = useState<VideoQuality>("high");
-  const [mp4Supported, setMp4Supported] = useState(true);
+  const [fps, setFps] = useState<24 | 30 | 60>(30);
+  const [maxDimension, setMaxDimension] = useState<1280 | 1920 | 'original'>(1920);
+  const [renderer, setRenderer] = useState<'auto' | 'dom'>('auto');
+  const dimensions = getVideoOutputDimensions(maxDimension);
 
   const hasAnimation = timeline.tracks.length > 0 || animationClips.length > 0 || imageOverlays.some(o => o.mediaType === 'video');
   const hasSlides = slides.length > 1;
   const [exportMode, setExportMode] = useState<ExportMode>("animation");
-
-  useEffect(() => {
-    setMp4Supported(isMp4Supported());
-  }, []);
-
-  // Preload FFmpeg WASM when dialog opens (hides 2-5s load behind UI interaction)
-  useEffect(() => {
-    if (open && !isFFmpegLoaded()) {
-      preloadFFmpeg().catch(() => {});
-    }
-  }, [open]);
 
   // Sync export mode when dialog opens
   useEffect(() => {
@@ -153,7 +87,7 @@ export function ExportSlideshowDialog({
 
   const handleExport = async () => {
     try {
-      const options: VideoExportOptions = { format, quality };
+      const options: VideoExportOptions = { format, quality, fps, maxDimension, renderer };
       let result;
       if (exportMode === "animation") {
         result = await exportAnimationVideo(options);
@@ -175,7 +109,7 @@ export function ExportSlideshowDialog({
         description: `Saved as ${result.format.toUpperCase()}`,
       });
     } catch (error) {
-      // User cancelled — not a failure, no error toast.
+      // User cancelled â€” not a failure, no error toast.
       if (isExportAborted(error)) {
         return;
       }
@@ -200,7 +134,7 @@ export function ExportSlideshowDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
         {exporting ? (
           /* ---- Fun export progress view ---- */
           <div>
@@ -274,7 +208,7 @@ export function ExportSlideshowDialog({
                 <label className="text-sm font-medium text-foreground/90">Format</label>
                 <div className="grid grid-cols-2 gap-2">
                   {FORMAT_OPTIONS.map((opt) => {
-                    const isDisabled = opt.value === "mp4" && !mp4Supported;
+                    const isDisabled = false;
                     return (
                       <button
                         key={opt.value}
@@ -323,6 +257,29 @@ export function ExportSlideshowDialog({
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-3">
+                <label className="space-y-2 text-sm font-medium">Resolution
+                  <select aria-label="Video resolution" value={maxDimension} onChange={e => setMaxDimension(e.target.value === 'original' ? 'original' : Number(e.target.value) as 1280 | 1920)} className="block w-full rounded-md border border-border bg-card p-2 text-sm">
+                    <option value="1280">720p · max edge 1280</option>
+                    <option value="1920">1080p · max edge 1920</option>
+                    <option value="original">Original size</option>
+                  </select>
+                </label>
+                <label className="space-y-2 text-sm font-medium">Frame rate
+                  <select aria-label="Video frame rate" value={fps} onChange={e => setFps(Number(e.target.value) as 24 | 30 | 60)} className="block w-full rounded-md border border-border bg-card p-2 text-sm">
+                    <option value="24">24 fps</option><option value="30">30 fps</option><option value="60">60 fps</option>
+                  </select>
+                </label>
+              </div>
+              <p className="text-xs text-muted-foreground">{dimensions ? `${dimensions.width} × ${dimensions.height}` : 'Original dimensions'} · {fps} fps</p>
+              <label className="block space-y-2 text-sm font-medium">Rendering
+                <select aria-label="Video rendering" value={renderer} onChange={e => setRenderer(e.target.value as 'auto' | 'dom')} className="block w-full rounded-md border border-border bg-card p-2 text-sm">
+                  <option value="auto">Automatic · fastest compatible renderer</option>
+                  <option value="dom">Full renderer · reference export</option>
+                </select>
+                <span className="block text-xs font-normal text-muted-foreground">Both preserve all effects.</span>
+              </label>
+
               {/* Slide Duration */}
               {exportMode === "slideshow" && (
                 <div className="space-y-2">
@@ -335,9 +292,9 @@ export function ExportSlideshowDialog({
                       min={0.5}
                       max={30}
                       step={0.5}
-                      value={slideshow.defaultDuration}
+                      value={formatNumber(slideshow.defaultDuration)}
                       onChange={(e) =>
-                        setSlideshow({ defaultDuration: Number(e.target.value) || 3 })
+                        setSlideshow({ defaultDuration: roundToTwoDecimals(Number(e.target.value)) || 3 })
                       }
                       className="flex-1"
                     />
@@ -370,12 +327,7 @@ export function ExportSlideshowDialog({
                 Export as {format.toUpperCase()}
               </Button>
 
-              {/* Info */}
-              {!mp4Supported && format === "webm" && (
-                <p className="text-xs text-muted-foreground text-center">
-                  MP4 export requires a browser with WebCodecs support (Chrome 94+, Edge 94+)
-                </p>
-              )}
+
             </div>
           </>
         )}

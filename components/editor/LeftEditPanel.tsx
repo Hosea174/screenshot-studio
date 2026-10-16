@@ -107,7 +107,7 @@ export function LeftEditPanel() {
         />
       </div>
 
-      <div className="flex-1 overflow-y-auto scrollbar-hide">
+      <div className="flex-1 overflow-y-auto overscroll-contain scrollbar-hide">
         <div
           className="p-4 transition-[opacity,transform] duration-150 ease-out motion-reduce:transition-none"
           style={{
@@ -123,9 +123,6 @@ export function LeftEditPanel() {
                 <BrowserMockupSection />
               ) : (
                 <>
-                  <QuickTemplatesSection />
-                  <ExportPresetsSection />
-                  <ScreenshotDesignSection />
                   <StyleSection />
                   <BorderSection />
                   <ImageEnhanceSection />
@@ -138,6 +135,9 @@ export function LeftEditPanel() {
                   <AnnotateSection />
                   <TextSection />
                   <SettingsSection />
+                  <QuickTemplatesSection />
+                  <ExportPresetsSection />
+                  <ScreenshotDesignSection />
                 </>
               ) : null}
             </div>

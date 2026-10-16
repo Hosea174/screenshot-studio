@@ -42,6 +42,7 @@ import {
   withStoreDeviceTransform,
 } from "@/lib/store-screenshots/project";
 import { getStoreLayoutIds, resolveStoreLayout } from "@/lib/store-screenshots/layouts";
+import { formatNumber, roundToTwoDecimals } from "@/lib/number-format";
 import type {
   StoreDeviceSlot,
   StoreDeviceStyle,
@@ -159,8 +160,8 @@ function NumberInput({
       setDraft(String(value));
       return;
     }
-    const next = Math.min(max, Math.max(min, parsed));
-    setDraft(String(next));
+    const next = roundToTwoDecimals(Math.min(max, Math.max(min, parsed)));
+      setDraft(formatNumber(next));
     onChange(next);
   };
 

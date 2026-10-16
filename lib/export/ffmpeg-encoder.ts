@@ -13,7 +13,6 @@
  */
 
 import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { toBlobURL } from '@ffmpeg/util';
 
 export type FFmpegFormat = 'mp4' | 'webm' | 'gif';
 export type FFmpegQuality = 'high' | 'medium' | 'low';
@@ -39,6 +38,10 @@ const QUALITY_CRF: Record<FFmpegQuality, number> = {
 let ffmpegInstance: FFmpeg | null = null;
 let isLoading = false;
 let loadPromise: Promise<FFmpeg> | null = null;
+let loadingInstance: FFmpeg | null = null;
+let loadController: AbortController | null = null;
+let ffmpegBlobUrls: string[] = [];
+let multithreadedCore = false;
 
 // Mutex to prevent concurrent exports from corrupting the virtual filesystem
 let exportLock: Promise<void> = Promise.resolve();
@@ -56,26 +59,24 @@ function isCrossOriginIsolated(): boolean {
  * Fetch a URL with Cache API persistence.
  * Returns a blob URL — reuses cached response across sessions.
  */
-async function cachedToBlobURL(url: string, mimeType: string): Promise<string> {
+async function cachedToBlobURL(url: string, mimeType: string, signal?: AbortSignal): Promise<string> {
+  let cache: Cache | undefined;
+  let response: Response | undefined;
   try {
     if (typeof caches !== 'undefined') {
-      const cache = await caches.open(CACHE_NAME);
-      const cached = await cache.match(url);
-      if (cached) {
-        const blob = await cached.blob();
-        return URL.createObjectURL(new Blob([blob], { type: mimeType }));
-      }
-      // Fetch, store in cache, and return blob URL
-      const response = await fetch(url);
-      const clone = response.clone();
-      await cache.put(url, clone);
-      const blob = await response.blob();
-      return URL.createObjectURL(new Blob([blob], { type: mimeType }));
+      cache = await caches.open(CACHE_NAME);
+      response = await cache.match(url);
     }
-  } catch {
-    // Cache API unavailable or failed — fall through to toBlobURL
+  } catch { /* Cache availability does not determine export support. */ }
+  signal?.throwIfAborted();
+  if (!response) {
+    response = await fetch(url, { signal });
+    if (!response.ok) throw new Error('Could not load the video encoder');
+    if (cache) await cache.put(url, response.clone()).catch(() => {});
   }
-  return toBlobURL(url, mimeType);
+  const blob = await response.blob();
+  signal?.throwIfAborted();
+  return URL.createObjectURL(new Blob([blob], { type: mimeType }));
 }
 
 /**
@@ -84,7 +85,8 @@ async function cachedToBlobURL(url: string, mimeType: string): Promise<string> {
  * Caches WASM binaries via Cache API for fast reload across sessions.
  */
 export async function loadFFmpeg(
-  _onProgress?: (progress: number) => void
+  _onProgress?: (progress: number) => void,
+  multithread = false
 ): Promise<FFmpeg> {
   // Return existing instance if loaded
   if (ffmpegInstance && ffmpegInstance.loaded) {
@@ -100,11 +102,16 @@ export async function loadFFmpeg(
 
   loadPromise = (async () => {
     const ffmpeg = new FFmpeg();
-    const useMT = isCrossOriginIsolated();
+    loadingInstance = ffmpeg;
+    const controller = new AbortController();
+    loadController = controller;
+    // The MT core preallocates a 1 GiB heap and 32 workers even for small jobs.
+    // Use the reliable single-threaded fallback by default; WebCodecs is the fast path.
+    const useMT = multithread && isCrossOriginIsolated();
     const tempBlobUrls: string[] = [];
 
     const trackedBlobURL = async (url: string, mimeType: string): Promise<string> => {
-      const blobUrl = await cachedToBlobURL(url, mimeType);
+      const blobUrl = await cachedToBlobURL(url, mimeType, controller.signal);
       if (blobUrl.startsWith('blob:')) {
         tempBlobUrls.push(blobUrl);
       }
@@ -112,33 +119,49 @@ export async function loadFFmpeg(
     };
 
     try {
+      // Run the package's unbundled worker: webpack rewrites its variable core
+      // import into a context lookup that cannot resolve a blob URL.
+      const workerBase = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm';
+      const [workerSourceURL, constantsURL, errorsURL] = await Promise.all([
+        trackedBlobURL(`${workerBase}/worker.js`, 'text/javascript'),
+        trackedBlobURL(`${workerBase}/const.js`, 'text/javascript'),
+        trackedBlobURL(`${workerBase}/errors.js`, 'text/javascript'),
+      ]);
+      const workerSource = await (await fetch(workerSourceURL, { signal: controller.signal })).text();
+      const classWorkerURL = URL.createObjectURL(new Blob([workerSource.replace('"./const.js"', JSON.stringify(constantsURL)).replace('"./errors.js"', JSON.stringify(errorsURL))], { type: 'text/javascript' }));
+      tempBlobUrls.push(classWorkerURL);
       if (useMT) {
-        const baseURL = 'https://unpkg.com/@ffmpeg/core-mt@0.12.6/dist/esm';
+        const baseURL = 'https://unpkg.com/@ffmpeg/core-mt@0.12.10/dist/esm';
         await ffmpeg.load({
+          classWorkerURL,
           coreURL: await trackedBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
           wasmURL: await trackedBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
           workerURL: await trackedBlobURL(`${baseURL}/ffmpeg-core.worker.js`, 'text/javascript'),
         });
       } else {
-        const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+        const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm';
         await ffmpeg.load({
+          classWorkerURL,
           coreURL: await trackedBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
           wasmURL: await trackedBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
         });
       }
 
       ffmpegInstance = ffmpeg;
+      multithreadedCore = useMT;
+      ffmpegBlobUrls = tempBlobUrls;
       return ffmpeg;
     } catch (error) {
+      ffmpeg.terminate();
       // Clear load promise to allow retries after transient CDN/network failures.
       loadPromise = null;
       throw error;
     } finally {
       isLoading = false;
-
-      for (const blobUrl of tempBlobUrls) {
-        URL.revokeObjectURL(blobUrl);
-      }
+      loadingInstance = null;
+      loadController = null;
+      // MT threads can start after load(), so keep their module URLs until termination.
+      if (ffmpegInstance !== ffmpeg) for (const blobUrl of tempBlobUrls) URL.revokeObjectURL(blobUrl);
     }
   })();
 
@@ -159,14 +182,57 @@ export function isFFmpegLoaded(): boolean {
  * - Frame mode (default): writes individual JPEG frames, best for animations
  * - Concat mode: writes 1 JPEG per unique slide + concat script, best for slideshows
  */
+function encodingArgs(inputArgs: string[], format: FFmpegFormat, quality: FFmpegQuality, width: number, height: number, fps: number, outputFile: string): string[] {
+    const crf = QUALITY_CRF[quality];
+    inputArgs = ['-threads', multithreadedCore ? '2' : '1', ...inputArgs];
+    let ffmpegArgs: string[];
+    if (format === 'mp4') {
+      ffmpegArgs = [
+        ...inputArgs,
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-crf', String(crf),
+        '-pix_fmt', 'yuv420p',
+        '-threads', multithreadedCore ? '2' : '1',
+        '-movflags', '+faststart',
+        '-y',
+        outputFile,
+      ];
+    } else if (format === 'webm') {
+      // VP8 is faster and avoids libvpx-vp9's WASM memory failures at large sizes.
+      const bitrate = { high: '10M', medium: '5M', low: '2M' }[quality];
+      ffmpegArgs = [
+        ...inputArgs, '-c:v', 'libvpx', '-crf', String(crf), '-b:v', bitrate,
+        '-pix_fmt', 'yuv420p', '-deadline', 'realtime', '-cpu-used', '8',
+        '-lag-in-frames', '0', '-threads', multithreadedCore ? '2' : '1',
+        '-y', outputFile,
+      ];
+    } else if (format === 'gif') {
+      ffmpegArgs = [
+        ...inputArgs,
+        '-vf', `fps=${Math.min(fps, 30)},scale=${width}:${height}:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=256[p];[s1][p]paletteuse=dither=bayer`,
+        '-loop', '0',
+        '-y',
+        outputFile,
+      ];
+    } else {
+      throw new Error(`Unsupported format: ${format}`);
+    }
+
+    return ffmpegArgs;
+}
+
 export class FFmpegVideoEncoder {
   private ffmpeg: FFmpeg | null = null;
   private options: Required<FFmpegEncoderOptions>;
   private frameCount = 0;
+  private pendingFrames = 0;
+  private segments: string[] = [];
   private progressHandler: ((event: { progress: number }) => void) | null = null;
   private logHandler: ((event: { message: string }) => void) | null = null;
   private releaseLock: (() => void) | null = null;
   private cleanedUp = false;
+  private recentLogs: string[] = [];
 
   // Concat demuxer mode
   private concatMode = false;
@@ -209,6 +275,8 @@ export class FFmpegVideoEncoder {
 
     // Set up logging with tracked handler for cleanup
     this.logHandler = ({ message }) => {
+      this.recentLogs.push(message);
+      if (this.recentLogs.length > 12) this.recentLogs.shift();
       this.options.onLog(message);
     };
     this.ffmpeg.on('log', this.logHandler);
@@ -242,12 +310,12 @@ export class FFmpegVideoEncoder {
   async addFrame(canvas: HTMLCanvasElement): Promise<void> {
     if (!this.ffmpeg) throw new Error('FFmpeg not initialized');
 
-    const paddedIndex = String(this.frameCount).padStart(6, '0');
+    const paddedIndex = String(this.pendingFrames).padStart(6, '0');
     const fileName = `frame_${paddedIndex}.jpg`;
 
     // Encode canvas to JPEG (much faster than PNG, fine for video frames)
-    const blob = await new Promise<Blob>((resolve) => {
-      canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.92);
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((b) => b ? resolve(b) : reject(new Error('Frame capture failed')), 'image/jpeg', 0.92);
     });
 
     const arrayBuffer = await blob.arrayBuffer();
@@ -256,6 +324,21 @@ export class FFmpegVideoEncoder {
     await this.ffmpeg.writeFile(fileName, data);
 
     this.frameCount++;
+    this.pendingFrames++;
+    if (this.options.format !== 'gif' && this.pendingFrames >= this.options.fps * 5) await this.flushSegment();
+  }
+
+  private async flushSegment(): Promise<void> {
+    if (!this.ffmpeg || !this.pendingFrames) return;
+    const { format, quality, width, height, fps } = this.options;
+    const file = `segment_${this.segments.length}.${format}`;
+    let exitCode: number;
+    try { exitCode = await this.ffmpeg.exec(encodingArgs(['-framerate', String(fps), '-i', 'frame_%06d.jpg'], format, quality, width, height, fps, file)); }
+    catch (error) { console.error('FFmpeg segment failed', this.recentLogs.join('\n')); throw error; }
+    if (exitCode !== 0) throw new Error('FFmpeg failed to encode a video segment');
+    this.segments.push(file);
+    await Promise.all(Array.from({ length: this.pendingFrames }, (_, i) => this.ffmpeg!.deleteFile(`frame_${String(i).padStart(6, '0')}.jpg`)));
+    this.pendingFrames = 0;
   }
 
   /**
@@ -267,10 +350,9 @@ export class FFmpegVideoEncoder {
     }
 
     const { fps, format, quality, width, height, onProgress } = this.options;
-    const crf = QUALITY_CRF[quality];
 
     // Build FFmpeg command based on format
-    let outputFile: string;
+    const outputFile = `output.${format}`;
     let ffmpegArgs: string[];
 
     // Determine input args based on mode
@@ -293,52 +375,12 @@ export class FFmpegVideoEncoder {
       await this.ffmpeg.writeFile('concat.txt', new TextEncoder().encode(concatScript));
     }
 
-    if (format === 'mp4') {
-      outputFile = 'output.mp4';
-      ffmpegArgs = [
-        ...inputArgs,
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-crf', String(crf),
-        '-pix_fmt', 'yuv420p',
-        '-movflags', '+faststart',
-        '-y',
-        outputFile,
-      ];
-    } else if (format === 'webm') {
-      outputFile = 'output.webm';
-      // libvpx-vp9 is a software encoder and much slower than mp4's hardware
-      // WebCodecs path — squeeze out what speed we can via the MT WASM core
-      // (row-based multithreading + tile columns), when available.
-      const threads = typeof navigator !== 'undefined' && navigator.hardwareConcurrency
-        ? Math.min(navigator.hardwareConcurrency, 8)
-        : 4;
-      const tileColumns = Math.min(4, Math.max(0, Math.floor(Math.log2(width / 256))));
-      ffmpegArgs = [
-        ...inputArgs,
-        '-c:v', 'libvpx-vp9',
-        '-crf', String(crf + 10),
-        '-b:v', '0',
-        '-pix_fmt', 'yuv420p',
-        '-deadline', 'realtime',
-        '-cpu-used', '8',
-        '-row-mt', '1',
-        '-tile-columns', String(tileColumns),
-        '-threads', String(threads),
-        '-y',
-        outputFile,
-      ];
-    } else if (format === 'gif') {
-      outputFile = 'output.gif';
-      ffmpegArgs = [
-        ...inputArgs,
-        '-vf', `fps=${Math.min(fps, 30)},scale=${width}:${height}:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=256[p];[s1][p]paletteuse=dither=bayer`,
-        '-loop', '0',
-        '-y',
-        outputFile,
-      ];
+    if (!this.concatMode && format !== 'gif' && this.segments.length) {
+      await this.flushSegment();
+      await this.ffmpeg.writeFile('segments.txt', new TextEncoder().encode(this.segments.map(file => `file '${file}'`).join('\n')));
+      ffmpegArgs = ['-f', 'concat', '-safe', '0', '-i', 'segments.txt', '-c', 'copy', ...(format === 'mp4' ? ['-movflags', '+faststart'] : []), '-y', outputFile];
     } else {
-      throw new Error(`Unsupported format: ${format}`);
+      ffmpegArgs = encodingArgs(inputArgs, format, quality, width, height, fps, outputFile);
     }
 
     this.progressHandler = ({ progress }) => {
@@ -348,7 +390,8 @@ export class FFmpegVideoEncoder {
 
     try {
       // Run FFmpeg
-      await this.ffmpeg.exec(ffmpegArgs);
+      const exitCode = await this.ffmpeg.exec(ffmpegArgs);
+      if (exitCode !== 0) throw new Error('FFmpeg failed to encode the video');
 
       // Read output file
       const data = await this.ffmpeg.readFile(outputFile);
@@ -410,12 +453,14 @@ export class FFmpegVideoEncoder {
         deleteOps.push(this.ffmpeg.deleteFile('concat.txt').catch(() => {}));
       } else {
         // Frame mode: delete frame files
-        for (let i = 0; i < this.frameCount; i++) {
+        for (let i = 0; i < this.pendingFrames; i++) {
           const paddedIndex = String(i).padStart(6, '0');
           deleteOps.push(this.ffmpeg.deleteFile(`frame_${paddedIndex}.jpg`).catch(() => {}));
         }
       }
 
+      for (const file of this.segments) deleteOps.push(this.ffmpeg.deleteFile(file).catch(() => {}));
+      deleteOps.push(this.ffmpeg.deleteFile('segments.txt').catch(() => {}));
       deleteOps.push(this.ffmpeg.deleteFile('output.mp4').catch(() => {}));
       deleteOps.push(this.ffmpeg.deleteFile('output.webm').catch(() => {}));
       deleteOps.push(this.ffmpeg.deleteFile('output.gif').catch(() => {}));
@@ -466,11 +511,16 @@ export async function encodeWithFFmpeg(
  * Terminate FFmpeg and free memory
  */
 export function terminateFFmpeg(): void {
+  loadController?.abort();
+  loadingInstance?.terminate();
   if (ffmpegInstance) {
     ffmpegInstance.terminate();
     ffmpegInstance = null;
     loadPromise = null;
   }
+  loadPromise = null;
+  for (const url of ffmpegBlobUrls) URL.revokeObjectURL(url);
+  ffmpegBlobUrls = [];
   // Reset the mutex so a cancelled export mid-encode can't deadlock the next one.
   // Any encoder still holding the old lock resolves a now-unreferenced promise.
   exportLock = Promise.resolve();

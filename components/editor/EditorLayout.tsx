@@ -17,6 +17,8 @@ import { MobileBanner } from "./MobileBanner";
 import { TimelineEditor, useTimelinePlayback } from "@/components/timeline";
 import { MinimizedMotionBar } from "@/components/timeline/MinimizedMotionBar";
 import { useImageStore } from "@/lib/store";
+import { useMotionSelection } from "@/lib/animation/editor";
+import { beginMotionDrag } from '@/lib/animation/drag-history';
 import { trackEditorOpen } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 import {
@@ -130,6 +132,49 @@ function EditorMain() {
 
   // Persistent timeline playback loop across timeline toggle states
   useTimelinePlayback();
+  React.useEffect(() => {
+    let finish: (() => void) | null = null;
+    const end = () => { finish?.(); finish = null; };
+    const begin = (event: PointerEvent) => {
+      if (!(event.target instanceof HTMLElement) || !event.target.closest('[data-slot="slider"]')) return;
+      end(); finish = beginMotionDrag();
+    };
+    window.addEventListener('pointerdown', begin, true);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+    return () => { end(); window.removeEventListener('pointerdown', begin, true); window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end); };
+  }, []);
+
+  // Transport shortcuts stay mounted when the timeline panel is collapsed and
+  // take priority over focused editor controls such as sliders and buttons.
+  React.useEffect(() => {
+    const handleTransportShortcut = (event: KeyboardEvent) => {
+      const state = useImageStore.getState();
+      const target = event.target;
+      const isTyping = target instanceof HTMLElement && (
+        target.isContentEditable ||
+        !!target.closest('textarea, input:not([type]), input[type="text"], input[type="search"], input[type="url"], input[type="email"], input[type="password"], input[type="tel"], [role="dialog"], [role="alertdialog"]')
+      );
+
+      if ((event.code === "Space" || event.key === " ") && !event.ctrlKey && !event.metaKey && !event.altKey && !isTyping) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (!event.repeat) state.togglePlayback();
+        return;
+      }
+
+      if (event.ctrlKey && event.altKey && !event.metaKey && !isTyping && (event.code === "ArrowLeft" || event.code === "ArrowRight")) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        state.stopPlayback();
+        useMotionSelection.getState().selectKeyframe(null);
+        state.setPlayhead(event.code === "ArrowLeft" ? 0 : state.timeline.duration);
+      }
+    };
+
+    window.addEventListener("keydown", handleTransportShortcut, true);
+    return () => window.removeEventListener("keydown", handleTransportShortcut, true);
+  }, []);
 
   // enable autosave
   useAutosaveDraft();
@@ -160,7 +205,7 @@ function EditorMain() {
   };
 
   return (
-    <div className="h-screen flex flex-col bg-background overflow-hidden overscroll-contain">
+    <div className="fixed inset-0 flex flex-col bg-background overflow-hidden overscroll-contain">
       <EditorStoreSync />
 
       <MobileBanner />

@@ -5,6 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { getOrCreateStudioMcpToken } from '../lib/mcp/security.js';
+import { aspectRatios } from '../lib/constants/aspect-ratios.js';
 
 async function main() {
 const projectRoot = process.cwd();
@@ -44,6 +45,26 @@ server.registerTool('inspect_project', {
   title: 'Inspect active project', description: 'Read the active editor state: canvas, design, assets, layers, slides, annotations, blur regions, and animation clips/keyframes. Original media bytes stay in the browser.', inputSchema: {},
 }, async () => jsonResult(await callEditor('inspect_project')));
 
+server.registerTool('list_projects', {
+  title: 'List local editor projects', description: 'List saved projects in the connected browser and identify the active project. Project data remains local to that browser.', inputSchema: {},
+}, async () => jsonResult(await callEditor('list_projects')));
+
+server.registerTool('create_project', {
+  title: 'Create local editor project', description: 'Save the current project and create a new blank local project with a generated phrase name.', inputSchema: {},
+}, async () => jsonResult(await callEditor('create_project')));
+
+server.registerTool('open_project', {
+  title: 'Open local editor project', description: 'Save the current project, then switch the connected editor to a saved project by its ID. Call list_projects to choose an ID.', inputSchema: { projectId: z.string().min(1).max(128) },
+}, async ({ projectId }) => jsonResult(await callEditor('open_project', { projectId })));
+
+server.registerTool('rename_project', {
+  title: 'Rename local editor project', description: 'Rename a saved project in the connected browser. Names must contain 1–80 characters.', inputSchema: { projectId: z.string().min(1).max(128), name: z.string().trim().min(1).max(80) },
+}, async ({ projectId, name }) => jsonResult(await callEditor('rename_project', { projectId, name })));
+
+server.registerTool('delete_project', {
+  title: 'Delete local editor project', description: 'Permanently delete a saved project and its local media. Call list_projects first; deleting a project requires confirmDestructive:true. If the active project is deleted, the editor opens the most recently updated remaining project or creates a blank project.', inputSchema: { projectId: z.string().min(1).max(128), confirmDestructive: z.boolean().default(false) },
+}, async ({ projectId, confirmDestructive }) => jsonResult(await callEditor('delete_project', { projectId, confirmDestructive })));
+
 server.registerTool('inspect_ui', {
   title: 'Inspect active page controls', description: 'Read the active Screenshot Studio page’s headings, visible content, accessible controls, field values, select options, and dialog names. Use this to operate any page feature that is not represented by a named project-store action.', inputSchema: {},
 }, async () => jsonResult(await callEditor('inspect_ui')));
@@ -54,7 +75,7 @@ server.registerTool('interact_ui', {
 }, async ({ kind, target, value, path: destination, exact, index, filePaths }) => {
   const files = kind === 'upload' ? await Promise.all((filePaths ?? []).map(async input => {
     const absolute = path.resolve(input); const info = await stat(absolute); if (info.size > 32 * 1024 * 1024) throw new Error(`${path.basename(absolute)} exceeds 32 MB.`);
-    const extension = path.extname(absolute).toLowerCase(); const mime = ({ '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.avif': 'image/avif', '.gif': 'image/gif' } as Record<string, string>)[extension]; if (!mime) throw new Error(`${path.basename(absolute)} is not a supported image.`);
+    const extension = path.extname(absolute).toLowerCase(); const mime = ({ '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.avif': 'image/avif', '.gif': 'image/gif', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime' } as Record<string, string>)[extension]; if (!mime) throw new Error(`${path.basename(absolute)} is not a supported image or video. Supported formats: PNG, JPEG, WebP, AVIF, GIF, MP4, WebM, and MOV.`);
     return { _studioFile: true, name: path.basename(absolute), type: mime, base64: (await readFile(absolute)).toString('base64') };
   })) : undefined;
   return jsonResult(await callEditor('interact_ui', { kind, target, value, path: destination, exact, index, files }));
@@ -68,6 +89,11 @@ server.registerTool('apply_editor_action', {
   title: 'Apply Screenshot Studio action', description: 'Invoke any supported Screenshot Studio image, editor, or device store action by its exact name. Call list_capabilities first for argument signatures. Destructive clear/remove/reset operations require confirmDestructive=true. Keep edits grouped logically and inspect the resulting state.',
   inputSchema: { store: z.enum(['image', 'editor', 'device']).default('image'), action: z.string().min(1), args: z.array(z.unknown()).max(8).default([]), confirmDestructive: z.boolean().default(false) },
 }, async ({ store, action, args, confirmDestructive }) => jsonResult(await callEditor('apply_action', { store, action, args, confirmDestructive })));
+
+server.registerTool('set_aspect_ratio', {
+  title: 'Set canvas aspect ratio', description: 'Set the active Screenshot Studio canvas to any supported aspect-ratio preset. Use this direct action instead of operating the aspect-ratio menu.',
+  inputSchema: { aspectRatio: z.string().refine(value => aspectRatios.some(preset => preset.id === value), 'Choose a supported aspect-ratio preset ID.').describe(`Supported IDs: ${aspectRatios.map(preset => preset.id).join(', ')}`) },
+}, async ({ aspectRatio }) => jsonResult(await callEditor('apply_action', { store: 'image', action: 'setAspectRatio', args: [aspectRatio] })));
 
 server.registerTool('load_image_file', {
   title: 'Load local image', description: 'Load a user-selected local PNG, JPEG, or WebP file into the active editor as the main image. The absolute path must be supplied by the user or selected from project files; the image is not uploaded to a remote service.', inputSchema: { filePath: z.string().min(1).max(1024) },
@@ -130,8 +156,8 @@ server.registerTool('export_image', {
 });
 
 server.registerTool('export_video', {
-  title: 'Export animation or slideshow video', description: 'Render the active animation or slideshow through Screenshot Studio’s video export pipeline. MP4, WebM, and GIF (slideshow) are supported. The rendered file downloads from the editor browser.', inputSchema: { mode: z.enum(['animation', 'slideshow']).default('animation'), format: z.enum(['mp4', 'webm', 'gif']).default('mp4'), quality: z.enum(['high', 'medium', 'low']).default('high') },
-}, async ({ mode, format, quality }) => jsonResult(await callEditor('export_video', { mode, format, quality })));
+  title: 'Export animation or slideshow video', description: 'Render the active animation or slideshow through Screenshot Studio’s video export pipeline. Exports default to a 1920-pixel maximum edge, 30 fps, and medium quality. MP4, WebM, and GIF are supported. The rendered file downloads from the editor browser.', inputSchema: { mode: z.enum(['animation', 'slideshow']).default('animation'), format: z.enum(['mp4', 'webm', 'gif']).default('mp4'), quality: z.enum(['high', 'medium', 'low']).default('medium'), fps: z.union([z.literal(24), z.literal(30), z.literal(60)]).default(30), resolution: z.enum(['720p', '1080p', 'source']).default('1080p') },
+}, async ({ mode, format, quality, fps, resolution }) => jsonResult(await callEditor('export_video', { mode, format, quality, fps, resolution })));
 
 const skillPath = path.join(projectRoot, '.agents/skills/screenshot-studio-mcp/SKILL.md');
 server.registerTool('get_agent_workflow', {

@@ -2,6 +2,8 @@ import { useImageStore } from "@/lib/store";
 import { exportSlideFrame, exportSlideFrameAsCanvas } from "./export-slideFrame";
 import { applyAnimationFrame } from "@/lib/animation/playback";
 import { seekTimelineVideos } from "@/lib/video-layers";
+import { useExportProgress } from '@/hooks/useExportProgress';
+import { exportDiagnostics, recordExportTime } from './export/export-diagnostics';
 
 function wait(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -214,7 +216,8 @@ export async function streamSlidesToEncoder(
   fps: number,
   onFrame: (canvas: HTMLCanvasElement, frameIndex: number) => Promise<void>,
   onProgress?: (progress: number) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  outputDimensions?: { width: number; height: number }
 ): Promise<{ width: number; height: number; totalFrames: number }> {
   // Read a fresh snapshot of the store each time
   const { slides, slideshow, uploadedImageUrl } = useImageStore.getState();
@@ -238,7 +241,7 @@ export async function streamSlidesToEncoder(
       await switchToSlideAndWait(slide.id, slide.src, 50);
     }
 
-    const canvas = await exportSlideFrameAsCanvas();
+    const canvas = await exportSlideFrameAsCanvas(outputDimensions);
 
     if (si === 0) {
       width = canvas.width;
@@ -361,18 +364,24 @@ export async function streamAnimationToEncoder(
   fps: number,
   onFrame: (canvas: HTMLCanvasElement, frameIndex: number) => Promise<void>,
   onProgress?: (progress: number) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  outputDimensions?: { width: number; height: number },
+  renderer: 'auto' | 'dom' = 'auto'
 ): Promise<{ width: number; height: number; totalFrames: number }> {
   const store = useImageStore.getState();
   const { timeline, slides, slideshow, setActiveSlide } = store;
   const { duration, tracks } = timeline;
 
-  if (tracks.length === 0 && slides.length <= 1 && !store.imageOverlays.some(o => o.mediaType === 'video')) {
+  if (tracks.length === 0 && !store.animationClips.length && slides.length <= 1 && !store.imageOverlays.some(o => o.mediaType === 'video')) {
     throw new Error("No animation tracks to render");
   }
 
   const frameIntervalMs = 1000 / fps;
   const totalFrames = Math.ceil(duration / frameIntervalMs);
+  if (renderer === 'auto' && outputDimensions && signal) {
+    const { streamCachedVideo } = await import('./export/cached-export');
+    if (await streamCachedVideo(store, outputDimensions, fps, onFrame, signal, onProgress)) return { ...outputDimensions, totalFrames };
+  }
   const BATCH_SIZE = 5;
 
   // Disable CSS transitions on 3D overlay so each frame captures exact values
@@ -382,7 +391,10 @@ export async function streamAnimationToEncoder(
   let height = 0;
   let lastSlideId: string | null = null;
 
+  const { createTimelineVideoReader } = await import('./export/timeline-video-reader');
+  let videos: Awaited<ReturnType<typeof createTimelineVideoReader>> | undefined;
   try {
+    videos = await createTimelineVideoReader(structuredClone(store.imageOverlays), fps, totalFrames, signal);
     for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
       throwIfAborted(signal);
       const time = frameIndex * frameIntervalMs;
@@ -409,25 +421,34 @@ export async function streamAnimationToEncoder(
       // timeline UI for every captured frame.
       applyAnimationFrame(time);
 
+      // Overlay-specific animation and start visibility depend on timeline time.
+      useImageStore.setState(s => ({ timeline: { ...s.timeline, playhead: time } }));
+
       // Force DOM reflow so transforms apply instantly (transitions are disabled)
       forceReflow();
 
       // Double-RAF: ensures React has committed DOM changes and browser has painted
       await waitForDOMCommit();
-      await seekTimelineVideos(time);
+      await videos.draw(frameIndex);
 
       // Capture and immediately stream to encoder
-      const canvas = await exportSlideFrameAsCanvas();
+      const captureStarted = performance.now();
+      const canvas = await exportSlideFrameAsCanvas(outputDimensions);
+      recordExportTime('capture', performance.now() - captureStarted);
+      const diagnostics = exportDiagnostics(); if (diagnostics) { diagnostics.domCaptures++; diagnostics.frames++; }
 
       if (frameIndex === 0) {
         width = canvas.width;
         height = canvas.height;
       }
 
+      const encodeStarted = performance.now();
       await onFrame(canvas, frameIndex);
+      recordExportTime('encoding', performance.now() - encodeStarted);
 
       // Report progress
       if (onProgress) {
+        useExportProgress.getState().update('Rendering', frameIndex + 1, totalFrames);
         onProgress((frameIndex + 1) / totalFrames * 100);
       }
 
@@ -437,6 +458,7 @@ export async function streamAnimationToEncoder(
       }
     }
   } finally {
+    await videos?.dispose();
     restoreTransitions();
   }
 

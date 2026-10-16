@@ -1,6 +1,7 @@
 "use client";
 import { ShadowDefinition } from "@/components/canvas/html/ShadowDefinition";
 import { DEFAULT_MEDIA_SHADOW } from "@/components/controls/ShadowAdjustments";
+import { buildDropShadowFilter } from "@/lib/drop-shadow";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import Moveable from "react-moveable";
@@ -41,6 +42,12 @@ function MockupRenderer({ mockup, canvasWidth, canvasHeight, zIndex }: MockupRen
   const height = definition ? width / definition.aspectRatio : width;
   const left = mockup.position.x * canvasWidth - width / 2;
   const top = mockup.position.y * canvasHeight - height / 2;
+  const shadow = mockup.shadow ?? DEFAULT_MEDIA_SHADOW;
+  const shadowFilter = !shadow.enabled
+    ? undefined
+    : (shadow.spread ?? 0) > 0
+      ? `url(#shadow-${mockup.id})`
+      : buildDropShadowFilter(shadow);
 
   useLayoutEffect(() => {
     if (!isSelected || !targetElement) return;
@@ -232,13 +239,15 @@ function MockupRenderer({ mockup, canvasWidth, canvasHeight, zIndex }: MockupRen
           transform: `rotate(${mockup.rotation}deg)`,
           transformOrigin: "center",
           opacity: mockup.opacity,
-          filter: (mockup.shadow ?? DEFAULT_MEDIA_SHADOW).enabled ? `url(#shadow-${mockup.id})` : undefined,
+          filter: shadowFilter,
           pointerEvents: "auto",
           cursor: isEditingScreen ? "move" : "grab",
           zIndex,
         }}
       >
-        <ShadowDefinition id={`shadow-${mockup.id}`} shadow={mockup.shadow ?? DEFAULT_MEDIA_SHADOW} />
+        {shadow.enabled && (shadow.spread ?? 0) > 0 ? (
+          <ShadowDefinition id={`shadow-${mockup.id}`} shadow={shadow} />
+        ) : null}
         <DeviceShell
           definition={definition}
           screen={mockup.screen}

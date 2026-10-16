@@ -97,7 +97,7 @@ export function getClipMaskAtTime(clips: AnimationClip[], tracks: AnimationTrack
     clipMask = prev.clipMask.replace(numberPattern, () => {
       const a = Number(from[index][0]);
       const b = Number(to[index++][0]);
-      return String(Number((a + (b - a) * progress).toFixed(3)));
+      return String(Number((a + (b - a) * progress).toFixed(2)));
     });
   }
   return clipMask;

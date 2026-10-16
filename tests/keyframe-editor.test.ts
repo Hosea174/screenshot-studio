@@ -5,7 +5,8 @@ import { clonePresetTracks, ANIMATION_PRESETS } from '../lib/animation/presets';
 import { retimeClipTracks, clampClipDuration } from '../lib/animation/retiming';
 import { DEFAULT_ANIMATABLE_PROPERTIES as defaults, type AnimationTrack, type AnimationClip, type Keyframe } from '../types/animation';
 import { useImageStore } from '../lib/store';
-import { useMotionLibrary } from '../lib/animation/editor';
+import { capturePose, motionPose, previewPose, insertPropertyKey } from '../lib/animation/authoring';
+import { useMotionSelection, useMotionLibrary } from '../lib/animation/editor';
 import { applyAnimationFrame } from '../lib/animation/playback';
 import { beginMotionDrag } from '../lib/animation/drag-history';
 import { videoTimeAt } from '../lib/video-layers';
@@ -142,28 +143,74 @@ test('custom-asset animation captures current 3D perspective and rotation as its
   assert.equal(rotYTrack.keyframes[0].properties.rotateY, -14);
 });
 
-test('auto-keyframing updates an existing keyframe when within 60ms threshold and creates a new one when outside', () => {
+test('authoring a nearby pose keeps the initial keyframe intact and never seeds an end state', () => {
   const state = useImageStore.getState();
   state.clearAnimationClips();
+  state.setPerspective3D({ scale: 1 });
   state.addAnimationClip('custom-asset', 0);
 
-  // Playhead at 0 (coincides with start keyframe at 0)
-  state.setPlayhead(20); // within 60ms threshold of 0
+  state.setPlayhead(20);
   state.recordPropertyChange('scale', 1.8);
   const scaleTrack1 = useImageStore.getState().timeline.tracks.find(t => t.keyframes.some(k => 'scale' in k.properties))!;
-  // Should update the existing keyframe at 0 instead of adding a new one
+  // A nearby key is a separate authored pose, not an overwrite of the first.
   assert.equal(scaleTrack1.keyframes.length, 2);
   assert.equal(scaleTrack1.keyframes[0].time, 0);
-  assert.equal(scaleTrack1.keyframes[0].properties.scale, 1.8);
+  assert.equal(scaleTrack1.keyframes[0].properties.scale, 1);
+  assert.equal(scaleTrack1.keyframes[1].time, 20);
+  assert.equal(scaleTrack1.keyframes[1].properties.scale, 1.8);
 
-  // Playhead at 1200 (far from 0 and 2000)
+  // An additional authored key does not create an automatic endpoint.
   state.setPlayhead(1200);
   state.recordPropertyChange('scale', 2.4);
   const scaleTrack2 = useImageStore.getState().timeline.tracks.find(t => t.keyframes.some(k => 'scale' in k.properties))!;
-  // Should now have 3 keyframes, with the new one at 1200
+  // Exactly three authored keys: 0, 20 and 1200.
   assert.equal(scaleTrack2.keyframes.length, 3);
   const middleKey = scaleTrack2.keyframes.find(k => k.time === 1200);
   assert.ok(middleKey, 'Middle keyframe at 1200 was created');
   assert.equal(middleKey?.properties.scale, 2.4);
   assert.equal(middleKey?.easing, 'ease-in-out-cubic');
+});
+
+
+test('canvas pose preview is transient, target-specific and captured as one undo step', () => {
+  const state = useImageStore.getState();
+  state.clearAnimationClips(); state.setSelectedOverlayId('video');
+  state.addAnimationClip('custom-asset', 0, 'video');
+  const clip = useImageStore.getState().animationClips[0];
+  assert.ok(useImageStore.getState().timeline.tracks.every(t => t.keyframes.length === 1));
+  state.setPlayhead(1000);
+  const originalTracks = useImageStore.getState().timeline.tracks;
+  assert.equal(previewPose('asset', { scale: 3 }), false);
+  assert.equal(previewPose('video', { scale: 1.8, translateX: 25 }), true);
+  assert.equal(motionPose(clip).scale, 1.8);
+  assert.equal(useImageStore.getState().timeline.tracks, originalTracks);
+  useImageStore.temporal.getState().clear();
+  assert.equal(capturePose(), true);
+  assert.equal(useMotionSelection.getState().draft, null);
+  assert.equal(useImageStore.temporal.getState().pastStates.length, 1);
+  assert.equal(motionPose(clip).scale, 1.8);
+  assert.equal(motionPose(clip, 0).scale, 1);
+  assert.ok(useImageStore.getState().timeline.tracks.every(t => t.keyframes.every(k => k.time !== 2000)));
+  useImageStore.temporal.getState().undo();
+  assert.equal(motionPose(clip).scale, 1);
+  previewPose('video', { scale: 2 }); state.setPlayhead(1200);
+  assert.equal(useMotionSelection.getState().draft, null);
+  state.setSelectedOverlayId(null);
+});
+
+test('a new property seeds only its initial state and moving onto a key replaces the collision', () => {
+  const state = useImageStore.getState(); state.clearAnimationClips(); state.addAnimationClip('custom-asset', 0);
+  const clip = useImageStore.getState().animationClips[0];
+  const scale = useImageStore.getState().timeline.tracks.find(t => t.keyframes.some(k => 'scale' in k.properties))!;
+  state.removeTrack(scale.id);
+  insertPropertyKey(clip, 'scale', 2, 1000);
+  const track = useImageStore.getState().timeline.tracks.find(t => t.keyframes.some(k => 'scale' in k.properties))!;
+  assert.deepEqual(track.keyframes.map(k => k.time), [0, 1000]);
+  const moved = track.keyframes[1]; state.updateKeyframe(track.id, moved.id, { time: 0 });
+  const result = useImageStore.getState().timeline.tracks.find(t => t.id === track.id)!;
+  assert.equal(result.keyframes.length, 1); assert.equal(result.keyframes[0].id, moved.id);
+  assert.equal(result.keyframes[0].properties.scale, 2);
+  state.updateTrack(track.id, { isLocked: true });
+  insertPropertyKey(clip, 'scale', 4, 1200);
+  assert.equal(useImageStore.getState().timeline.tracks.find(t => t.id === track.id)!.keyframes.length, 1);
 });

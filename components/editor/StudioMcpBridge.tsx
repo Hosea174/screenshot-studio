@@ -12,6 +12,9 @@ import { CLIP_MASK_PRESETS } from '@/components/timeline/MotionInspector';
 import { processFile } from '@/lib/image-tools/ops';
 import { buildOutputName, buildProcessOptions, DEFAULT_TOOL_SETTINGS, type BatchToolEngine, type ToolEngineName, type ToolSettings } from '@/lib/image-tools/plan';
 import { TOOLS } from '@/lib/seo/tools';
+import { getEditorProjectRuntime, useEditorProjectSession } from '@/lib/editor-projects/session';
+import { getActiveEditorProjectId, getEditorProject, listEditorProjects } from '@/lib/editor-projects/storage';
+import { withVideoCanvasImages, withVideoCanvasSnapshot } from '@/lib/video-layers';
 
 const ACTIONS: Record<string, readonly string[]> = {
   image: ['setUploadedImageUrl', 'replaceTemplateMedia', 'clearImage', 'setGradient', 'setBorderRadius', 'setBackgroundBorderRadius', 'setAspectRatio', 'setCustomDimensions', 'setBackgroundConfig', 'setBackgroundType', 'setBackgroundValue', 'setBackgroundOpacity', 'setBackgroundBlur', 'setBackgroundNoise', 'addTextOverlay', 'updateTextOverlay', 'removeTextOverlay', 'clearTextOverlays', 'addImageOverlay', 'updateImageOverlay', 'removeImageOverlay', 'clearImageOverlays', 'addMockup', 'updateMockup', 'removeMockup', 'clearMockups', 'duplicateMockup', 'reorderMockup', 'clearDeviceLayout', 'applyDeviceLayout', 'setImageOpacity', 'setImageScale', 'setImageBorder', 'setImageShadow', 'setImageStylePreset', 'setShadowPreset', 'applyVisualPreset', 'applyAnimatedTemplate', 'setPerspective3D', 'setImageFilter', 'resetImageFilters', 'resetCanvasSettings', 'setExportSettings', 'exportImage', 'setSlideshow', 'setActiveSlide', 'removeSlide', 'startPreview', 'resetSlideshow', 'stopPreview', 'setTimeline', 'setShowTimeline', 'toggleTimeline', 'setPlayhead', 'togglePlayback', 'startPlayback', 'stopPlayback', 'addKeyframe', 'updateKeyframe', 'removeKeyframe', 'addTrack', 'updateTrack', 'removeTrack', 'applyAnimationPreset', 'clearTimeline', 'setTimelineDuration', 'addAnimationClip', 'updateAnimationClip', 'removeAnimationClip', 'clearAnimationClips', 'addAnnotation', 'updateAnnotation', 'removeAnnotation', 'clearAnnotations', 'setActiveAnnotationTool', 'setSelectedAnnotationId', 'setAnnotationDefaults', 'addBlurRegion', 'updateBlurRegion', 'removeBlurRegion', 'clearBlurRegions', 'setActiveRightPanelTab', 'reorderImageOverlay', 'setShowTemplates', 'setEditorMode', 'setBrowserUrl', 'setBrowserHeaderSize', 'setCanvasDimensions', 'toggleRulers', 'toggleGrid', 'setRulerInterval', 'setSelectedOverlayId', 'setIsMainImageSelected'],
@@ -32,6 +35,30 @@ const ACTION_HELP: Record<string, string> = {
   exportImage: 'Run the editor’s configured image export. Set format, quality, and filename with setExportSettings first.',
 };
 
+async function renderVideoAwareSnapshot<T>(render: () => Promise<T>): Promise<T> {
+  const state = useImageStore.getState();
+  const videoOverlays = state.imageOverlays.filter(overlay => overlay.isVisible && overlay.mediaType === 'video');
+  if (!videoOverlays.length) return render();
+
+  if (state.timeline.isPlaying) state.stopPlayback();
+  try {
+    // Let the stopped playhead commit before temporarily replacing canvases.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    return await withVideoCanvasSnapshot(async () => {
+      const { createTimelineVideoReader } = await import('@/lib/export/timeline-video-reader');
+      const reader = await createTimelineVideoReader(structuredClone(videoOverlays), 30, 1, undefined, state.timeline.playhead);
+      try {
+        await reader.draw(0);
+        return await withVideoCanvasImages(render);
+      } finally {
+        await reader.dispose();
+      }
+    });
+  } finally {
+    if (state.timeline.isPlaying) useImageStore.getState().startPlayback();
+  }
+}
+
 const FILE_ACTIONS = new Set(['setImage', 'addImages']);
 const fileFromData = (value: unknown) => {
   if (!value || typeof value !== 'object' || !('_studioFile' in value)) return value;
@@ -43,7 +70,9 @@ const fileFromData = (value: unknown) => {
 function compactProjectState() {
   const s = useImageStore.getState();
   const editor = useEditorStore.getState();
+  const projectSession = useEditorProjectSession.getState();
   return {
+    currentProject: projectSession.projects.find(project => project.id === projectSession.activeProjectId) ?? null,
     editor: { mode: s.editorMode, hasImage: !!s.uploadedImageUrl, imageName: s.imageName, activeSlideId: s.activeSlideId, slides: s.slides.map(({ id, name, duration }) => ({ id, name, duration })), selectedOverlayId: s.selectedOverlayId, isMainImageSelected: s.isMainImageSelected },
     canvas: { selectedAspectRatio: s.selectedAspectRatio, customDimensions: s.customDimensions, canvas: editor.canvas },
     design: { background: s.backgroundConfig, backgroundBlur: s.backgroundBlur, backgroundNoise: s.backgroundNoise, imageOpacity: s.imageOpacity, imageScale: s.imageScale, imageBorder: s.imageBorder, imageShadow: s.imageShadow, perspective3D: s.perspective3D, imageFilters: s.imageFilters, exportSettings: s.exportSettings },
@@ -57,6 +86,39 @@ function compactProjectState() {
 
 async function runCommand(operation: string, payload: Record<string, unknown> = {}) {
   const image = useImageStore.getState();
+  if (operation === 'list_projects') {
+    const [projects, activeProjectId] = await Promise.all([
+      listEditorProjects(),
+      getActiveEditorProjectId(),
+    ]);
+    return { projects, activeProjectId };
+  }
+  if (operation === 'create_project') {
+    const project = await getEditorProjectRuntime().createProject();
+    return { project, activeProjectId: project.id, projects: useEditorProjectSession.getState().projects };
+  }
+  if (operation === 'open_project') {
+    const projectId = String(payload.projectId ?? '');
+    if (!projectId) throw new Error('projectId is required. Call list_projects first.');
+    const project = await getEditorProjectRuntime().openProject(projectId);
+    return { project, activeProjectId: project.id, projects: useEditorProjectSession.getState().projects };
+  }
+  if (operation === 'rename_project') {
+    const projectId = String(payload.projectId ?? '');
+    const name = String(payload.name ?? '').trim();
+    if (!projectId) throw new Error('projectId is required. Call list_projects first.');
+    if (!name || name.length > 80) throw new Error('Project name must contain 1–80 characters.');
+    const project = await getEditorProjectRuntime().renameProject(projectId, name);
+    return { project, activeProjectId: useEditorProjectSession.getState().activeProjectId, projects: useEditorProjectSession.getState().projects };
+  }
+  if (operation === 'delete_project') {
+    const projectId = String(payload.projectId ?? '');
+    if (!projectId) throw new Error('projectId is required. Call list_projects first.');
+    if (payload.confirmDestructive !== true) throw new Error('Deleting a project is permanent. Set confirmDestructive:true to proceed.');
+    if (!await getEditorProject(projectId)) throw new Error('Project not found. Call list_projects to see available project IDs.');
+    const result = await getEditorProjectRuntime().deleteProject(projectId);
+    return { ...result, projects: useEditorProjectSession.getState().projects };
+  }
   if (operation === 'inspect_project') return compactProjectState();
   if (operation === 'inspect_ui') {
     const visible = (element: Element) => { const rect = element.getBoundingClientRect(); const style = getComputedStyle(element); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'; };
@@ -154,19 +216,19 @@ async function runCommand(operation: string, payload: Record<string, unknown> = 
     return { __studioMcpFiles: outputs };
   }
   if (operation === 'capture_preview') {
-    const target = document.getElementById('image-render-card') ?? document.querySelector('main') ?? document.body;
-    const blob = await domToBlob(target, { scale: Math.min(1, 1400 / Math.max(target.clientWidth, target.clientHeight)), backgroundColor: 'transparent' });
+    const target = document.querySelector<HTMLElement>('#image-render-card [data-html-canvas="true"]') ?? document.getElementById('image-render-card') ?? document.querySelector('main') ?? document.body;
+    const blob = await renderVideoAwareSnapshot(() => domToBlob(target, { scale: Math.min(1, 1400 / Math.max(target.clientWidth, target.clientHeight)), backgroundColor: 'transparent' }));
     const base64 = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onerror = () => reject(reader.error); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.readAsDataURL(blob); });
     return { __studioMcpImage: true, mimeType: blob.type || 'image/png', base64 };
   }
   if (operation === 'export_image') {
-    const target = document.getElementById('image-render-card');
+    const target = document.querySelector<HTMLElement>('#image-render-card [data-html-canvas="true"]') ?? document.getElementById('image-render-card');
     if (!target) throw new Error('No rendered editor canvas was found.');
     const format = String(payload.format ?? image.exportSettings.format);
     const mime = ({ png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp' } as Record<string, string>)[format];
     if (!mime) throw new Error('Image format must be PNG, JPEG, or WebP.');
     const scale = Math.max(1, Math.min(5, Number(payload.scale ?? image.exportSettings.quality.replace('x', '')) || 1));
-    const canvas = await domToCanvas(target, { scale, backgroundColor: format === 'jpeg' ? '#ffffff' : null, width: target.scrollWidth, height: target.scrollHeight });
+    const canvas = await renderVideoAwareSnapshot(() => domToCanvas(target, { scale, backgroundColor: format === 'jpeg' ? '#ffffff' : null, width: target.scrollWidth, height: target.scrollHeight }));
     const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(file => file ? resolve(file) : reject(new Error('Canvas export failed.')), mime, Number(payload.quality ?? 0.92)));
     const base64 = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onerror = () => reject(reader.error); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.readAsDataURL(blob); });
     return { __studioMcpImage: true, mimeType: blob.type, base64, fileName: `${image.exportSettings.fileName || 'screenshot-studio'}.${format}` };
@@ -174,10 +236,14 @@ async function runCommand(operation: string, payload: Record<string, unknown> = 
   if (operation === 'export_video') {
     const mode = payload.mode === 'slideshow' ? 'slideshow' : 'animation';
     const format = payload.format === 'gif' || payload.format === 'webm' ? payload.format : 'mp4';
-    const quality = payload.quality === 'low' || payload.quality === 'medium' ? payload.quality : 'high';
+    const quality = payload.quality === 'low' || payload.quality === 'high' ? payload.quality : 'medium';
+    const fps = payload.fps === 24 || payload.fps === 60 ? payload.fps : 30;
+    const resolution = payload.resolution === '720p' || payload.resolution === 'source' ? payload.resolution : '1080p';
     const { exportAnimationVideo, exportSlideshowVideo } = await import('@/lib/export-slideshow-video');
-    const result = mode === 'slideshow' ? await exportSlideshowVideo({ format, quality }) : await exportAnimationVideo({ format, quality });
-    return { ok: true, mode, requestedFormat: format, actualFormat: result.format, downloaded: true };
+    const result = mode === 'slideshow'
+      ? await exportSlideshowVideo({ format, quality, fps, maxDimension: resolution === '720p' ? 1280 : resolution === 'source' ? 'original' : 1920 })
+      : await exportAnimationVideo({ format, quality, fps, maxDimension: resolution === '720p' ? 1280 : resolution === 'source' ? 'original' : 1920 });
+    return { ok: true, mode, requestedFormat: format, actualFormat: result.format, fps: mode === 'animation' ? fps : undefined, resolution, downloaded: true };
   }
   throw new Error(`Unknown editor operation: ${operation}`);
 }

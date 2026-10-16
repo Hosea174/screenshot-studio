@@ -5,6 +5,8 @@ import { useImageStore, useEditorStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
 import { getBackgroundCSS } from '@/lib/constants/backgrounds';
 import { aspectRatios } from '@/lib/constants/aspect-ratios';
+import { DEFAULT_OVERLAY_TILT } from '@/lib/overlay-style';
+import { previewPose } from '@/lib/animation/authoring';
 import { SectionWrapper } from './SectionWrapper';
 
 interface TransformPreset {
@@ -113,6 +115,9 @@ export function TransformsGallery() {
     backgroundBorderRadius,
     borderRadius,
     imageShadow,
+    imageOverlays,
+    selectedOverlayId,
+    updateImageOverlay,
   } = useImageStore();
 
   const { screenshot } = useEditorStore();
@@ -123,17 +128,21 @@ export function TransformsGallery() {
 
   const [selectedIndex, setSelectedIndex] = React.useState<number | null>(null);
 
+  const selectedOverlay = imageOverlays.find(overlay => overlay.id === selectedOverlayId);
+  const currentRotateX = selectedOverlay?.tilt?.rotateX ?? perspective3D.rotateX;
+  const currentRotateY = selectedOverlay?.tilt?.rotateY ?? perspective3D.rotateY;
+  const currentRotateZ = selectedOverlay?.rotation ?? perspective3D.rotateZ;
   React.useEffect(() => {
     const idx = ALL_PRESETS.findIndex((preset) => {
       const v = preset.values;
       return (
-        Math.abs(v.rotateX - perspective3D.rotateX) < 2 &&
-        Math.abs(v.rotateY - perspective3D.rotateY) < 2 &&
-        Math.abs(v.rotateZ - perspective3D.rotateZ) < 2
+        Math.abs(v.rotateX - currentRotateX) < 2 &&
+        Math.abs(v.rotateY - currentRotateY) < 2 &&
+        Math.abs(v.rotateZ - currentRotateZ) < 2
       );
     });
     setSelectedIndex(idx >= 0 ? idx : null);
-  }, [perspective3D]);
+  }, [perspective3D, currentRotateX, currentRotateY, currentRotateZ]);
 
   const getGlobalIndex = (categoryIndex: number, presetIndex: number): number => {
     let index = 0;
@@ -144,11 +153,29 @@ export function TransformsGallery() {
   };
 
   const applyPreset = (preset: TransformPreset, index: number) => {
-    setPerspective3D(preset.values);
+    if (selectedOverlay) {
+      const pose = { ...preset.values };
+      if (!previewPose(selectedOverlay.id, pose)) {
+        const { perspective, rotateX, rotateY, rotateZ, translateX, translateY, scale } = preset.values;
+        updateImageOverlay(selectedOverlay.id, {
+          tilt: { ...(selectedOverlay.tilt ?? DEFAULT_OVERLAY_TILT), perspective, rotateX, rotateY },
+          rotation: rotateZ,
+          size: selectedOverlay.size * scale,
+          position: {
+            x: selectedOverlay.position.x + translateX * selectedOverlay.size / 100,
+            y: selectedOverlay.position.y + translateY * selectedOverlay.size / 100,
+          },
+        });
+      }
+    } else {
+      setPerspective3D(preset.values);
+    }
     setSelectedIndex(index);
   };
 
-  const previewImageUrl = uploadedImageUrl || screenshot?.src || null;
+  const previewImageUrl = selectedOverlay
+    ? selectedOverlay.mediaType === 'video' ? selectedOverlay.poster ?? null : selectedOverlay.src
+    : uploadedImageUrl || screenshot?.src || null;
 
   // Use the same background CSS as the main canvas
   const backgroundStyle = getBackgroundCSS(backgroundConfig, 384);
